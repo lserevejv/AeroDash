@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#4FC3E8" />
+<meta name="description" content="AERODRIFT — a relaxing endless glide-and-collect game in the Frutiger Aero aesthetic." />
+<title>AERODRIFT</title>
+
+<!-- Rounded, friendly sans. If the CDN is unreachable the system rounded stack in style.css takes over. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Poppins:wght@400;600;700&display=swap" />
+
+<link rel="stylesheet" href="css/style.css" />
+
+<!--
+  Three.js is pulled from a CDN via an import map: no bundler, no npm install, no build step.
+  Version is pinned so the game can never break under us from an upstream release.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- The WebGL canvas lives here; every screen below is a DOM overlay on top of it. -->
+<div id="stage">
+  <canvas id="gl"></canvas>
+
+  <!-- Slow-drifting bokeh discs, pure CSS, drawn over the 3D scene for that Aero "lens" feel. -->
+  <div id="bokeh" aria-hidden="true"></div>
+  <!-- Full-screen white flash used for boost / biome-change punctuation. -->
+  <div id="flash" aria-hidden="true"></div>
+  <!-- Floating "+120" score popups get appended here. -->
+  <div id="popups" aria-hidden="true"></div>
+</div>
+
+<!-- ============================= BOOT / LOADING ============================= -->
+<section id="screen-boot" class="screen is-active">
+  <div class="panel panel--tight boot-panel">
+    <div class="boot-orb" aria-hidden="true"></div>
+    <h2 class="panel-title">Warming up the sky…</h2>
+    <p class="muted" id="boot-note">Loading Three.js from CDN</p>
+  </div>
+</section>
+
+<!-- Shown only if the module graph never boots (offline / CDN blocked). -->
+<section id="screen-offline" class="screen">
+  <div class="panel">
+    <h2 class="panel-title">Couldn't reach the CDN</h2>
+    <p>AERODRIFT loads Three.js from <code>unpkg.com</code>. Check your connection and reload.</p>
+    <p class="muted small">
+      Also note: browsers block ES modules on <code>file://</code>. Serve the folder over HTTP —
+      e.g. <code>python3 -m http.server</code> — then open <code>http://localhost:8000</code>.
+    </p>
+    <div class="btn-row">
+      <button class="gel" data-action="reload">Reload</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ TITLE ================================== -->
+<section id="screen-title" class="screen">
+  <div class="title-wrap">
+    <h1 class="logo"><span class="logo-text" data-text="AERODRIFT">AERODRIFT</span></h1>
+    <p class="tagline">Glide. Collect. Drift forever.</p>
+
+    <div class="btn-row btn-row--stack">
+      <button class="gel gel--primary gel--big" data-action="play">Play</button>
+      <div class="btn-row">
+        <button class="gel" data-action="how">How to Play</button>
+        <button class="gel" data-action="settings">Settings</button>
+      </div>
+    </div>
+
+    <div class="panel panel--stats" id="title-stats">
+      <div class="stat"><span class="stat-label">Best Score</span><span class="stat-value" id="stat-best">0</span></div>
+      <div class="stat"><span class="stat-label">Lifetime Distance</span><span class="stat-value" id="stat-lifetime">0 m</span></div>
+    </div>
+
+    <div class="panel panel--trails">
+      <h3 class="panel-subtitle">Wisp Trail</h3>
+      <div class="trail-row" id="trail-row" role="radiogroup" aria-label="Wisp trail colour"></div>
+      <p class="muted small" id="trail-hint">&nbsp;</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== HOW TO PLAY ============================== -->
+<section id="screen-how" class="screen screen--modal">
+  <div class="panel">
+    <h2 class="panel-title">How to Play</h2>
+    <ul class="how-list">
+      <li><b>Steer</b> — move the mouse, or use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrow keys. On touch, drag anywhere.</li>
+      <li><b>Boost</b> — hold <kbd>Space</kbd>, or hold the on-screen boost pad. Orbs refill the meter.</li>
+      <li><b>Collect</b> — light orbs score points. Glass rings score big and add <b>+1 combo</b>.</li>
+      <li><b>Ride streams</b> — the glowing ribbons grant speed, bonus score and a multiplier.</li>
+      <li><b>Clouds &amp; coral</b> — brushing one just slows you and resets your combo. Nothing here can end your run.</li>
+      <li><b>Pause</b> — <kbd>Esc</kbd> at any time.</li>
+    </ul>
+    <p class="muted small">There is no way to lose. Fly for the flow, and for the score.</p>
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Got it</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================= HUD =================================== -->
+<div id="hud" aria-hidden="true">
+  <div class="hud-top">
+    <div class="glass-chip hud-score">
+      <span class="hud-label">Score</span>
+      <span class="hud-value" id="hud-score">0</span>
+      <span class="hud-combo" id="hud-combo">×1</span>
+    </div>
+
+    <div class="glass-chip hud-dist">
+      <span class="hud-label">Distance</span>
+      <span class="hud-value" id="hud-distance">0 m</span>
+      <div class="progress-tube" aria-hidden="true"><i id="hud-progress"></i></div>
+    </div>
+  </div>
+
+  <div class="hud-biome" id="hud-biome"></div>
+
+  <div class="hud-bottom">
+    <div class="boost-gauge" id="boost-gauge">
+      <span class="hud-label">Boost</span>
+      <div class="gauge-tube"><i id="boost-fill"></i></div>
+    </div>
+  </div>
+
+  <!-- Touch-only: appears when a touch device is detected. -->
+  <button id="boost-pad" class="boost-pad" aria-label="Boost">BOOST</button>
+  <button id="pause-btn" class="icon-btn" aria-label="Pause">II</button>
+</div>
+
+<!-- ================================ PAUSE ================================== -->
+<section id="screen-pause" class="screen screen--modal">
+  <div class="panel">
+    <h2 class="panel-title">Paused</h2>
+    <div class="btn-row btn-row--stack">
+      <button class="gel gel--primary gel--big" data-action="resume">Resume</button>
+      <div class="btn-row">
+        <button class="gel" data-action="settings">Settings</button>
+        <button class="gel" data-action="end-run">End Run</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== RESULTS ================================= -->
+<section id="screen-results" class="screen">
+  <div class="panel panel--results">
+    <h2 class="panel-title">Run Complete</h2>
+    <div class="result-badge" id="result-badge" hidden>New Best!</div>
+
+    <div class="result-grid">
+      <div class="stat stat--big"><span class="stat-label">Score</span><span class="stat-value" id="res-score">0</span></div>
+      <div class="stat"><span class="stat-label">Distance</span><span class="stat-value" id="res-distance">0 m</span></div>
+      <div class="stat"><span class="stat-label">Best Combo</span><span class="stat-value" id="res-combo">×1</span></div>
+      <div class="stat"><span class="stat-label">Best Score</span><span class="stat-value" id="res-best">0</span></div>
+    </div>
+
+    <div id="res-unlocks" class="unlock-row"></div>
+
+    <div class="btn-row">
+      <button class="gel gel--primary gel--big" data-action="play">Fly Again</button>
+      <button class="gel" data-action="home">Home</button>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== SETTINGS ================================ -->
+<section id="screen-settings" class="screen screen--modal">
+  <div class="panel">
+    <h2 class="panel-title">Settings</h2>
+
+    <label class="field">
+      <span class="field-label">Bloom <i class="field-val" id="val-bloom">100%</i></span>
+      <input type="range" id="set-bloom" min="0" max="200" step="5" value="100" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Volume <i class="field-val" id="val-volume">70%</i></span>
+      <input type="range" id="set-volume" min="0" max="100" step="1" value="70" />
+    </label>
+
+    <label class="field field--row">
+      <span class="field-label">Mute</span>
+      <input type="checkbox" id="set-mute" class="switch" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Quality</span>
+      <div class="seg" id="set-quality" role="radiogroup" aria-label="Quality">
+        <button class="seg-btn" data-q="low">Low</button>
+        <button class="seg-btn" data-q="medium">Medium</button>
+        <button class="seg-btn" data-q="high">High</button>
+        <button class="seg-btn" data-q="auto">Auto</button>
+      </div>
+    </label>
+
+    <p class="muted small" id="quality-note">Auto steps quality down if the framerate dips.</p>
+
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- Fallback: if the module graph never boots (CDN blocked, file:// module block), say so. -->
+<script>
+  setTimeout(function () {
+    if (!window.__AERODRIFT_BOOTED) {
+      document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
+      var el = document.getElementById('screen-offline');
+      if (el) el.classList.add('is-active');
+    }
+  }, 12000);
+  document.addEventListener('click', function (e) {
+    if (e.target && e.target.dataset && e.target.dataset.action === 'reload') location.reload();
+  });
+</script>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
