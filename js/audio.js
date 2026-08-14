@@ -39,6 +39,8 @@ export function createAudio(initial = {}) {
   let ctx = null;
   let master = null;
   let padBus = null;
+  let arpBus = null;
+  let shimmerBus = null;
   let sfxBus = null;
   let reverb = null;
   let reverbGain = null;
@@ -89,6 +91,21 @@ export function createAudio(initial = {}) {
     padBus.gain.value = 0.26;
     padBus.connect(master);
     padBus.connect(reverb);
+
+    // Two extra music layers that fade in with the combo streak. Their notes
+    // are always scheduled; only these bus gains move. Gating the *scheduling*
+    // instead would make the layers arrive up to two seconds late, because Web
+    // Audio events have to be queued ahead of time — this way the response is
+    // immediate and the music stays perfectly in step with the pad.
+    arpBus = ctx.createGain();
+    arpBus.gain.value = 0;
+    arpBus.connect(master);
+    arpBus.connect(reverb);
+
+    shimmerBus = ctx.createGain();
+    shimmerBus.gain.value = 0;
+    shimmerBus.connect(master);
+    shimmerBus.connect(reverb);
 
     sfxBus = ctx.createGain();
     sfxBus.gain.value = 0.55;
@@ -170,6 +187,68 @@ export function createAudio(initial = {}) {
         osc.stop(time + hold + release + 0.1);
       }
     });
+
+    scheduleArp(time, notes);
+    scheduleShimmer(time, notes);
+  }
+
+  /**
+   * Layer 2: a gentle eighth-note arpeggio walking the chord. Fades in from a
+   * ×6 combo, so a streak *sounds* like it is building rather than only
+   * showing a bigger number.
+   */
+  function scheduleArp(time, notes) {
+    const step = CHORD_SECONDS / 12;
+    for (let i = 0; i < 12; i++) {
+      const midi = notes[(i * 2 + 1) % notes.length] + 12;
+      const t = time + i * step;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = hz(midi);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.09, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + step * 1.6);
+
+      osc.connect(g);
+      g.connect(arpBus);
+      osc.start(t);
+      osc.stop(t + step * 1.7);
+    }
+  }
+
+  /** Layer 3: a high sine halo two octaves up. Fades in near the combo cap. */
+  function scheduleShimmer(time, notes) {
+    const hold = CHORD_SECONDS;
+    for (const midi of notes.slice(-2)) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = hz(midi + 24);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, time);
+      g.gain.exponentialRampToValueAtTime(0.05, time + 2.6);
+      g.gain.exponentialRampToValueAtTime(0.0001, time + hold + 2.4);
+
+      osc.connect(g);
+      g.connect(shimmerBus);
+      osc.start(time);
+      osc.stop(time + hold + 2.6);
+    }
+  }
+
+  /**
+   * Drive the music layers from the combo. Ramped with setTargetAtTime so the
+   * layers breathe in and out instead of switching, which would be far more
+   * distracting than the combo number changing.
+   */
+  function setIntensity(combo) {
+    if (!ctx || !arpBus) return;
+    const arp = clamp((combo - 5) / 7, 0, 1);
+    const shimmer = clamp((combo - 12) / 8, 0, 1);
+    arpBus.gain.setTargetAtTime(arp * 0.45, ctx.currentTime, 0.9);
+    shimmerBus.gain.setTargetAtTime(shimmer * 0.4, ctx.currentTime, 1.4);
   }
 
   /**
@@ -294,6 +373,66 @@ export function createAudio(initial = {}) {
     });
   }
 
+  /** Checkpoint sting. Each tier is the same shape, wider and brighter. */
+  function checkpoint(tier = 'minor') {
+    if (!started || !ctx) return;
+    if (tier === 'minor') {
+      envBlip(sfxBus, { type: 'sine', freq: hz(81), dur: 0.28, peak: 0.13 });
+      envBlip(sfxBus, { type: 'sine', freq: hz(88), dur: 0.22, peak: 0.08, delay: 0.05 });
+      return;
+    }
+    const notes = tier === 'epic' ? [0, 4, 7, 11, 14, 19] : [0, 5, 9, 12];
+    notes.forEach((s, i) => {
+      envBlip(sfxBus, {
+        type: 'triangle',
+        freq: hz(76 + s),
+        dur: tier === 'epic' ? 1.1 : 0.7,
+        peak: tier === 'epic' ? 0.18 : 0.14,
+        delay: i * 0.055,
+      });
+    });
+    noiseBurst(sfxBus, {
+      dur: tier === 'epic' ? 1.2 : 0.7,
+      peak: tier === 'epic' ? 0.12 : 0.08,
+      f0: 1400, f1: 8000, q: 0.8,
+    });
+  }
+
+  /** Portal crossing: a wide rising sweep with a bell on top. */
+  function portal() {
+    if (!started || !ctx) return;
+    noiseBurst(sfxBus, { dur: 1.5, peak: 0.16, f0: 300, f1: 6500, q: 1.1 });
+    [0, 7, 12, 16, 19].forEach((s, i) => {
+      envBlip(sfxBus, { type: 'sine', freq: hz(69 + s), dur: 1.6, peak: 0.15, delay: i * 0.07 });
+    });
+    envBlip(sfxBus, { type: 'triangle', freq: hz(45), sweepTo: hz(69), dur: 1.1, peak: 0.11 });
+  }
+
+  /**
+   * A pip breaking. Warmer and lower than `bump`, and deliberately NOT harsh:
+   * losing integrity is a warning, and the game never scolds.
+   */
+  function shieldBreak() {
+    if (!started || !ctx) return;
+    envBlip(sfxBus, { type: 'sine', freq: 320, sweepTo: 140, dur: 0.55, peak: 0.2 });
+    noiseBurst(sfxBus, { dur: 0.5, peak: 0.13, type: 'lowpass', f0: 1600, f1: 220, q: 0.7 });
+  }
+
+  /** A pip restored — small, bright, easy to miss if you are not looking. */
+  function shieldRegen() {
+    if (!started || !ctx) return;
+    envBlip(sfxBus, { type: 'sine', freq: hz(76), sweepTo: hz(83), dur: 0.4, peak: 0.11 });
+    envBlip(sfxBus, { type: 'sine', freq: hz(88), dur: 0.3, peak: 0.06, delay: 0.08 });
+  }
+
+  /** Account level-up, on the results screen. */
+  function levelUp() {
+    if (!started || !ctx) return;
+    [0, 4, 7, 12, 16].forEach((s, i) => {
+      envBlip(sfxBus, { type: 'triangle', freq: hz(72 + s), dur: 1.1, peak: 0.16, delay: i * 0.1 });
+    });
+  }
+
   /* ======================================================================
      Lifecycle
      ====================================================================== */
@@ -346,8 +485,9 @@ export function createAudio(initial = {}) {
 
   return {
     start, dispose, suspend, resume,
-    setVolume, setMuted, setPadLevel,
+    setVolume, setMuted, setPadLevel, setIntensity,
     collect, ring, boost, stream, bump, click, chime,
+    checkpoint, portal, shieldBreak, shieldRegen, levelUp,
     get started() { return started; },
     get volume() { return volume; },
     get muted() { return muted; },

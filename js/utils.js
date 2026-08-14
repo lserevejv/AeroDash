@@ -95,58 +95,8 @@ export class Pool {
   }
 }
 
-/* ==========================================================================
-   Persistence
-   ========================================================================== */
-
-const SAVE_KEY = 'aerodrift.save.v1';
-
-const DEFAULT_SAVE = {
-  bestScore: 0,
-  bestCombo: 1,
-  lifetimeDistance: 0,
-  runs: 0,
-  trail: 'chrome',
-  unlocked: ['chrome'],
-  settings: {
-    bloom: 1.0,
-    volume: 0.7,
-    muted: false,
-    quality: 'auto',
-  },
-};
-
-/**
- * localStorage can throw outright in private-browsing modes and sandboxed
- * frames, so every access is guarded and silently falls back to defaults —
- * losing a high score is never worth breaking the game over.
- */
-export function loadSave() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return structuredClone(DEFAULT_SAVE);
-    const parsed = JSON.parse(raw);
-    return {
-      ...structuredClone(DEFAULT_SAVE),
-      ...parsed,
-      settings: { ...DEFAULT_SAVE.settings, ...(parsed.settings || {}) },
-      unlocked: Array.isArray(parsed.unlocked) && parsed.unlocked.length
-        ? parsed.unlocked
-        : ['chrome'],
-    };
-  } catch (err) {
-    console.warn('[aerodrift] save unreadable, using defaults', err);
-    return structuredClone(DEFAULT_SAVE);
-  }
-}
-
-export function writeSave(save) {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  } catch (err) {
-    /* Storage full or blocked — the run still plays, it just won't persist. */
-  }
-}
+/* Persistence lives in economy.js — it owns the save schema, its migration and
+   every read/write, so there is exactly one definition of what a save is. */
 
 /* ==========================================================================
    Formatting

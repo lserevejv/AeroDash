@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
 <meta name="theme-color" content="#4FC3E8" />
-<meta name="description" content="AERODRIFT — a relaxing endless glide-and-collect game in the Frutiger Aero aesthetic." />
+<meta name="description" content="AERODRIFT — an endless glide-and-collect game in the Frutiger Aero aesthetic." />
 <title>AERODRIFT</title>
 
 <!-- Rounded, friendly sans. If the CDN is unreachable the system rounded stack in style.css takes over. -->
@@ -35,7 +35,7 @@
 
   <!-- Slow-drifting bokeh discs, pure CSS, drawn over the 3D scene for that Aero "lens" feel. -->
   <div id="bokeh" aria-hidden="true"></div>
-  <!-- Full-screen white flash used for boost / biome-change punctuation. -->
+  <!-- Full-screen white flash used for boost / checkpoint / portal punctuation. -->
   <div id="flash" aria-hidden="true"></div>
   <!-- Floating "+120" score popups get appended here. -->
   <div id="popups" aria-hidden="true"></div>
@@ -65,29 +65,55 @@
   </div>
 </section>
 
-<!-- ================================ TITLE ================================== -->
-<section id="screen-title" class="screen">
+<!-- ================================= HUB =================================== -->
+<section id="screen-hub" class="screen">
   <div class="title-wrap">
     <h1 class="logo"><span class="logo-text" data-text="AERODRIFT">AERODRIFT</span></h1>
     <p class="tagline">Glide. Collect. Drift forever.</p>
 
+    <!-- Wallet + account level -->
+    <div class="wallet" id="wallet">
+      <div class="coin coin--droplet" title="Droplets">
+        <i class="coin-icon icon-droplet" aria-hidden="true"></i>
+        <span id="wal-droplets">0</span>
+      </div>
+      <div class="coin coin--prism" title="Prisms">
+        <i class="coin-icon icon-prism" aria-hidden="true"></i>
+        <span id="wal-prisms">0</span>
+      </div>
+      <div class="coin coin--level" title="Account level">
+        <span class="lvl-badge" id="wal-level">1</span>
+        <div class="xp-tube"><i id="wal-xp"></i></div>
+      </div>
+    </div>
+
     <div class="btn-row btn-row--stack">
-      <button class="gel gel--primary gel--big" data-action="play">Play</button>
+      <button class="gel gel--primary gel--big" data-action="play">Fly</button>
       <div class="btn-row">
-        <button class="gel" data-action="how">How to Play</button>
-        <button class="gel" data-action="settings">Settings</button>
+        <button class="gel gel--sm" data-action="daily" id="btn-daily">Daily</button>
+        <button class="gel gel--sm" data-action="shop">Shop</button>
+        <button class="gel gel--sm" data-action="upgrades">Upgrades</button>
+      </div>
+      <div class="btn-row">
+        <button class="gel gel--sm" data-action="rebirth" id="btn-rebirth">Rebirth</button>
+        <button class="gel gel--sm" data-action="leaderboard">Leaderboard</button>
+        <button class="gel gel--sm" data-action="achievements">Log</button>
+      </div>
+      <div class="btn-row">
+        <button class="gel gel--sm" data-action="how">How to Play</button>
+        <button class="gel gel--sm" data-action="settings">Settings</button>
       </div>
     </div>
 
     <div class="panel panel--stats" id="title-stats">
       <div class="stat"><span class="stat-label">Best Score</span><span class="stat-value" id="stat-best">0</span></div>
-      <div class="stat"><span class="stat-label">Lifetime Distance</span><span class="stat-value" id="stat-lifetime">0 m</span></div>
+      <div class="stat"><span class="stat-label">Best Distance</span><span class="stat-value" id="stat-bestdist">0 m</span></div>
+      <div class="stat"><span class="stat-label">Lifetime</span><span class="stat-value" id="stat-lifetime">0 m</span></div>
     </div>
 
-    <div class="panel panel--trails">
-      <h3 class="panel-subtitle">Wisp Trail</h3>
-      <div class="trail-row" id="trail-row" role="radiogroup" aria-label="Wisp trail colour"></div>
-      <p class="muted small" id="trail-hint">&nbsp;</p>
+    <div class="panel panel--worlds">
+      <h3 class="panel-subtitle">Worlds Reached</h3>
+      <div class="world-row" id="world-row"></div>
     </div>
   </div>
 </section>
@@ -101,10 +127,12 @@
       <li><b>Boost</b> — hold <kbd>Space</kbd>, or hold the on-screen boost pad. Orbs refill the meter.</li>
       <li><b>Collect</b> — light orbs score points. Glass rings score big and add <b>+1 combo</b>.</li>
       <li><b>Ride streams</b> — the glowing ribbons grant speed, bonus score and a multiplier.</li>
-      <li><b>Clouds &amp; coral</b> — brushing one just slows you and resets your combo. Nothing here can end your run.</li>
-      <li><b>Pause</b> — <kbd>Esc</kbd> at any time.</li>
+      <li><b>Checkpoint arches</b> span the whole corridor and can't be missed. Every one pays out; every fourth adds a permanent run multiplier.</li>
+      <li><b>Portals</b> close a World and open the next. Thread the aperture for a bonus.</li>
+      <li><b>Shield</b> — clipping a cloud or coral costs one pip and your combo. Clean flying earns pips back. Only a contact with <b>no shield left</b> ends a run.</li>
+      <li><b>Pause</b> — <kbd>Esc</kbd> at any time. <b>Photo mode</b> — <kbd>P</kbd> while paused.</li>
     </ul>
-    <p class="muted small">There is no way to lose. Fly for the flow, and for the score.</p>
+    <p class="muted small">There is no timer. A careful pilot can fly forever.</p>
     <div class="btn-row">
       <button class="gel gel--primary" data-action="close-modal">Got it</button>
     </div>
@@ -118,16 +146,36 @@
       <span class="hud-label">Score</span>
       <span class="hud-value" id="hud-score">0</span>
       <span class="hud-combo" id="hud-combo">×1</span>
+      <span class="hud-mult" id="hud-mult" hidden>+0</span>
     </div>
 
     <div class="glass-chip hud-dist">
       <span class="hud-label">Distance</span>
       <span class="hud-value" id="hud-distance">0 m</span>
+      <span class="hud-sub" id="hud-next">Portal in 2,400 m</span>
       <div class="progress-tube" aria-hidden="true"><i id="hud-progress"></i></div>
     </div>
   </div>
 
+  <!-- Shield pips + run droplets -->
+  <div class="hud-left">
+    <div class="glass-chip hud-shield" id="hud-shield">
+      <span class="hud-label">Integrity</span>
+      <div class="pip-row" id="pip-row"></div>
+      <div class="regen-tube" aria-hidden="true"><i id="regen-fill"></i></div>
+    </div>
+    <div class="glass-chip hud-drops">
+      <i class="coin-icon icon-droplet" aria-hidden="true"></i>
+      <span id="hud-droplets">0</span>
+    </div>
+    <div class="glass-chip hud-ghost" id="hud-ghost" hidden>
+      <span class="hud-label">Ghost</span>
+      <span class="hud-value" id="ghost-delta">—</span>
+    </div>
+  </div>
+
   <div class="hud-biome" id="hud-biome"></div>
+  <div class="hud-toast" id="hud-toast"></div>
 
   <div class="hud-bottom">
     <div class="boost-gauge" id="boost-gauge">
@@ -148,31 +196,159 @@
     <div class="btn-row btn-row--stack">
       <button class="gel gel--primary gel--big" data-action="resume">Resume</button>
       <div class="btn-row">
-        <button class="gel" data-action="settings">Settings</button>
-        <button class="gel" data-action="end-run">End Run</button>
+        <button class="gel gel--sm" data-action="photo">Photo Mode</button>
+        <button class="gel gel--sm" data-action="settings">Settings</button>
+        <button class="gel gel--sm" data-action="end-run">End Run</button>
       </div>
     </div>
+    <p class="muted small" id="pause-seed">Seed —</p>
   </div>
 </section>
 
 <!-- =============================== RESULTS ================================= -->
 <section id="screen-results" class="screen">
   <div class="panel panel--results">
-    <h2 class="panel-title">Run Complete</h2>
+    <h2 class="panel-title" id="res-title">Run Complete</h2>
+    <p class="res-cause muted" id="res-cause"></p>
     <div class="result-badge" id="result-badge" hidden>New Best!</div>
 
     <div class="result-grid">
       <div class="stat stat--big"><span class="stat-label">Score</span><span class="stat-value" id="res-score">0</span></div>
       <div class="stat"><span class="stat-label">Distance</span><span class="stat-value" id="res-distance">0 m</span></div>
       <div class="stat"><span class="stat-label">Best Combo</span><span class="stat-value" id="res-combo">×1</span></div>
-      <div class="stat"><span class="stat-label">Best Score</span><span class="stat-value" id="res-best">0</span></div>
+      <div class="stat"><span class="stat-label">Worlds</span><span class="stat-value" id="res-worlds">1</span></div>
     </div>
 
+    <div class="earn-row">
+      <div class="earn"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="res-droplets">0</span></div>
+      <div class="earn" id="res-prism-wrap" hidden><i class="coin-icon icon-prism" aria-hidden="true"></i><span id="res-prisms">0</span></div>
+      <div class="earn earn--xp"><span class="earn-label">XP</span><span id="res-xp">0</span></div>
+    </div>
+
+    <div class="levelup" id="res-levelup" hidden></div>
     <div id="res-unlocks" class="unlock-row"></div>
+
+    <p class="muted small" id="res-seed">Seed —</p>
 
     <div class="btn-row">
       <button class="gel gel--primary gel--big" data-action="play">Fly Again</button>
-      <button class="gel" data-action="home">Home</button>
+      <button class="gel" data-action="home">Hub</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================= SHOP ================================== -->
+<section id="screen-shop" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Shop</h2>
+    <div class="wallet wallet--inline" id="shop-wallet">
+      <div class="coin coin--droplet"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="shop-droplets">0</span></div>
+      <div class="coin coin--prism"><i class="coin-icon icon-prism" aria-hidden="true"></i><span id="shop-prisms">0</span></div>
+    </div>
+
+    <div class="seg" id="shop-tabs" role="radiogroup" aria-label="Cosmetic type">
+      <button class="seg-btn is-on" data-tab="trail">Trails</button>
+      <button class="seg-btn" data-tab="skin">Skins</button>
+      <button class="seg-btn" data-tab="aura">Auras</button>
+    </div>
+
+    <div class="card-grid" id="shop-grid"></div>
+
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== UPGRADES ================================ -->
+<section id="screen-upgrades" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Upgrades</h2>
+    <div class="wallet wallet--inline">
+      <div class="coin coin--droplet"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="upg-droplets">0</span></div>
+      <div class="coin coin--level"><span class="lvl-badge" id="upg-level">1</span></div>
+    </div>
+
+    <div class="card-grid" id="upgrade-grid"></div>
+
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== REBIRTH ================================= -->
+<section id="screen-rebirth" class="screen screen--modal">
+  <div class="panel panel--rebirth">
+    <h2 class="panel-title">Rebirth</h2>
+    <p class="muted small">Trade this cycle for Prisms and a permanent multiplier.</p>
+
+    <div class="rebirth-meter">
+      <div class="progress-tube progress-tube--tall"><i id="reb-progress"></i></div>
+      <p class="muted small" id="reb-progress-label">0 / 10,000 m this cycle</p>
+    </div>
+
+    <div class="reb-grid">
+      <div class="reb-col reb-col--keep">
+        <h3 class="panel-subtitle">You keep</h3>
+        <ul id="reb-keeps"></ul>
+      </div>
+      <div class="reb-col reb-col--reset">
+        <h3 class="panel-subtitle">You reset</h3>
+        <ul id="reb-resets"></ul>
+      </div>
+    </div>
+
+    <div class="reb-payout">
+      <i class="coin-icon icon-prism" aria-hidden="true"></i>
+      <span id="reb-prisms">0</span>
+      <span class="muted small" id="reb-mult">×1.00 → ×1.12 score</span>
+    </div>
+
+    <div class="btn-row">
+      <button class="gel gel--gold gel--big" id="reb-confirm" data-action="do-rebirth">Ascend</button>
+      <button class="gel" data-action="close-modal">Not yet</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= LEADERBOARD =============================== -->
+<section id="screen-leaderboard" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Leaderboard</h2>
+
+    <div class="seg" id="board-tabs" role="radiogroup" aria-label="Board">
+      <button class="seg-btn is-on" data-board="global">Global</button>
+      <button class="seg-btn" data-board="daily">Daily</button>
+    </div>
+
+    <div class="net-state" id="net-state">Checking for a server…</div>
+    <ol class="board" id="board-list"></ol>
+
+    <label class="field">
+      <span class="field-label">Display name</span>
+      <input type="text" id="set-name" class="text-input" maxlength="18" placeholder="Anonymous Drifter" />
+    </label>
+    <p class="muted small">
+      Leaderboards and ghosts are optional. With no server running, everything else
+      works exactly the same — all progress is stored locally.
+    </p>
+
+    <div class="btn-row">
+      <button class="gel" data-action="refresh-board">Refresh</button>
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ACHIEVEMENTS =============================== -->
+<section id="screen-achievements" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Milestone Log</h2>
+    <p class="muted small" id="ach-progress">0 / 0 earned</p>
+    <div class="ach-list" id="ach-list"></div>
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
     </div>
   </div>
 </section>
@@ -181,6 +357,11 @@
 <section id="screen-settings" class="screen screen--modal">
   <div class="panel">
     <h2 class="panel-title">Settings</h2>
+
+    <label class="field">
+      <span class="field-label">Brightness <i class="field-val" id="val-exposure">100%</i></span>
+      <input type="range" id="set-exposure" min="60" max="140" step="2" value="100" />
+    </label>
 
     <label class="field">
       <span class="field-label">Bloom <i class="field-val" id="val-bloom">100%</i></span>
@@ -197,6 +378,11 @@
       <input type="checkbox" id="set-mute" class="switch" />
     </label>
 
+    <label class="field field--row">
+      <span class="field-label">Ghost racers</span>
+      <input type="checkbox" id="set-ghosts" class="switch" />
+    </label>
+
     <label class="field">
       <span class="field-label">Quality</span>
       <div class="seg" id="set-quality" role="radiogroup" aria-label="Quality">
@@ -211,9 +397,36 @@
 
     <div class="btn-row">
       <button class="gel gel--primary" data-action="close-modal">Back</button>
+      <button class="gel gel--danger gel--sm" data-action="reset-progress" id="btn-reset">Reset progress</button>
     </div>
   </div>
 </section>
+
+<!-- ============================== PHOTO MODE =============================== -->
+<div id="photo-bar" class="photo-bar" hidden>
+  <div class="photo-controls">
+    <label class="photo-field">
+      <span>Orbit <i id="val-orbit">0°</i></span>
+      <input type="range" id="photo-orbit" min="-180" max="180" step="1" value="0" />
+    </label>
+    <label class="photo-field">
+      <span>Height <i id="val-height">0</i></span>
+      <input type="range" id="photo-height" min="-14" max="20" step="0.5" value="4" />
+    </label>
+    <label class="photo-field">
+      <span>Zoom <i id="val-zoom">14</i></span>
+      <input type="range" id="photo-zoom" min="4" max="46" step="0.5" value="14" />
+    </label>
+    <label class="photo-field">
+      <span>Light <i id="val-photo-exp">100%</i></span>
+      <input type="range" id="photo-exposure" min="50" max="170" step="2" value="100" />
+    </label>
+  </div>
+  <div class="btn-row">
+    <button class="gel gel--primary gel--sm" data-action="photo-save">Save PNG</button>
+    <button class="gel gel--sm" data-action="photo-exit">Done</button>
+  </div>
+</div>
 
 <!-- Fallback: if the module graph never boots (CDN blocked, file:// module block), say so. -->
 <script>

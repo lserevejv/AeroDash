@@ -400,7 +400,18 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; background
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
 }
 
-.unlock-row { position: relative; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+/* A long-overdue milestone haul can earn a dozen of these at once, so the list
+   scrolls inside the panel rather than growing it past the viewport. */
+.unlock-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .unlock-toast {
   padding: 9px 16px;
   border-radius: var(--radius-sm);
@@ -663,6 +674,506 @@ body.is-touch .icon-btn { display: block; }
 }
 
 /* ==========================================================================
+   Currency icons
+   ==========================================================================
+   Drawn with border-radius and clip-path rather than shipped as images, for
+   the same reason every texture in the 3D scene is procedural: the project
+   contains no asset files at all.
+   ========================================================================== */
+
+.coin-icon {
+  display: inline-block;
+  width: 15px; height: 15px;
+  flex: 0 0 auto;
+  position: relative;
+}
+
+/* Droplet: a circle with one square corner, rotated to point up. */
+.icon-droplet {
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: radial-gradient(circle at 62% 34%, #FFFFFF 0%, #A9E4F5 30%, #4FC3E8 62%, #1B7BA8 100%);
+  box-shadow: 0 0 8px rgba(79, 195, 232, 0.7), inset 0 -2px 3px rgba(11, 71, 99, 0.3);
+}
+
+/* Prism: a faceted gem, two clipped triangles sharing a girdle. */
+.icon-prism {
+  clip-path: polygon(50% 0%, 100% 36%, 78% 100%, 22% 100%, 0% 36%);
+  background: linear-gradient(150deg, #FFFFFF 0%, #E8CFF6 26%, #C9A9F0 54%, #8CD8F0 78%, #FFD9E8 100%);
+  filter: drop-shadow(0 0 6px rgba(201, 169, 240, 0.85));
+}
+
+/* ==========================================================================
+   Wallet / account level
+   ========================================================================== */
+
+.wallet {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 4px 0 16px;
+}
+.wallet--inline { margin: 0 0 14px; }
+
+.coin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--aero-deep);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: 0 5px 14px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.coin--level { gap: 9px; }
+
+.lvl-badge {
+  display: grid;
+  place-items: center;
+  min-width: 26px; height: 26px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #0B4763;
+  background: linear-gradient(180deg, #FFFFFF 0%, #BFEEFF 48%, #6FD3F0 52%, #A6E7FA 100%);
+  border: 1px solid rgba(255,255,255,0.95);
+  box-shadow: 0 2px 6px var(--shadow-1);
+}
+
+.xp-tube {
+  position: relative;
+  width: 74px; height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(120,170,195,0.5), rgba(255,255,255,0.45));
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow: inset 0 1px 3px var(--shadow-1);
+}
+.xp-tube i {
+  display: block; height: 100%; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #FFFFFF 0%, #C9A9F0 45%, #8E6FD0 100%);
+  box-shadow: 0 0 8px rgba(201, 169, 240, 0.9);
+  transition: width 300ms ease-out;
+}
+
+/* ==========================================================================
+   Button variants
+   ========================================================================== */
+
+.gel--sm { padding: 9px 18px; font-size: 14px; }
+
+.gel--gold {
+  color: #6A4B00;
+  background: linear-gradient(180deg, #FFF6CF 0%, #FFE985 46%, #FFD24C 50%, #FFE07A 100%);
+}
+.gel--gold:hover { box-shadow: 0 12px 26px var(--shadow-2), 0 0 26px rgba(255, 210, 76, 0.85), 0 1px 0 rgba(255,255,255,0.95) inset; }
+
+.gel--danger { color: #8A3550; background: linear-gradient(180deg, #FFF0F4 0%, #FFD9E4 48%, #F2AFC4 52%, #FFE2EC 100%); }
+
+.gel[disabled], .gel.is-disabled {
+  filter: grayscale(0.6) brightness(1.04);
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+.gel[disabled]:hover, .gel.is-disabled:hover { transform: none; box-shadow: 0 6px 16px var(--shadow-1); }
+
+/* ==========================================================================
+   Wide panels, worlds row
+   ========================================================================== */
+
+.panel--wide { width: min(720px, 100%); }
+.panel--rebirth { width: min(620px, 100%); }
+.panel--worlds { padding: 16px 20px; margin-top: 14px; width: min(440px, 100%); }
+
+.world-row { position: relative; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+.world-chip {
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(210,235,246,0.45));
+  border: 1px solid rgba(255,255,255,0.85);
+}
+.world-chip.is-reached {
+  color: #0B4763;
+  background: linear-gradient(180deg, #FFFFFF 0%, #CFEEFB 48%, #7FD8F0 52%, #B6E9FA 100%);
+  box-shadow: 0 3px 10px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.world-chip.is-realm.is-reached {
+  background: linear-gradient(180deg, #FFF6CF 0%, #FFE0A0 48%, #FFC24C 52%, #FFE07A 100%);
+  color: #6A4B00;
+}
+
+/* ==========================================================================
+   Item cards (shop + upgrades)
+   ========================================================================== */
+
+.card-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 12px;
+  margin: 4px 0 18px;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  padding: 4px;
+  /* Own scroll container so a long catalog never scrolls the whole screen. */
+  overscroll-behavior: contain;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 13px 12px;
+  border-radius: var(--radius-md);
+  text-align: left;
+  background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.36) 44%, rgba(206,234,245,0.30) 45%, rgba(178,220,238,0.38) 100%);
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 6px 16px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 150ms cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow 200ms ease;
+}
+.card::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 44%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.66), rgba(255,255,255,0.05));
+  border-radius: var(--radius-md) var(--radius-md) 46% 46% / var(--radius-md) var(--radius-md) 20% 20%;
+  pointer-events: none;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 12px 24px var(--shadow-2), 0 0 18px rgba(120, 210, 240, 0.5); }
+.card.is-locked { cursor: not-allowed; filter: grayscale(0.5); opacity: 0.72; }
+.card.is-locked:hover { transform: none; }
+.card.is-equipped { box-shadow: 0 0 0 2px rgba(255,255,255,0.95), 0 8px 20px var(--shadow-2), 0 0 22px rgba(255, 233, 133, 0.8); }
+.card.is-maxed { opacity: 0.9; }
+
+.card-head { position: relative; display: flex; align-items: center; gap: 9px; }
+
+/* The colour swatch that previews a trail or skin. */
+.card-swatch {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 2px solid rgba(255,255,255,0.92);
+  box-shadow: 0 3px 8px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  position: relative;
+}
+.card-swatch::after {
+  content: "";
+  position: absolute; left: 22%; top: 14%;
+  width: 34%; height: 26%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.2));
+}
+
+.card-name { position: relative; font-family: var(--font-display); font-weight: 800; font-size: 15px; color: var(--aero-deep); }
+.card-blurb { position: relative; font-size: 12px; line-height: 1.4; color: var(--ink-soft); min-height: 32px; }
+.card-detail { position: relative; font-size: 12px; font-weight: 600; color: var(--teal-deep); }
+
+.card-foot { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 2px; }
+
+.price { display: flex; align-items: center; gap: 5px; font-family: var(--font-display); font-weight: 800; font-size: 14px; color: var(--aero-deep); }
+.price.is-poor { color: #B4506E; }
+
+.card-tag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.tag-owned { color: #2C6C8B; background: rgba(255,255,255,0.72); }
+.tag-equipped { color: #6A4B00; background: linear-gradient(180deg, #FFE985, #FFD24C); }
+.tag-locked { color: #7A5C8E; background: rgba(255,255,255,0.6); }
+
+/* Upgrade level pips. */
+.lv-row { position: relative; display: flex; gap: 4px; }
+.lv-pip {
+  width: 13px; height: 7px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow: inset 0 1px 2px var(--shadow-1);
+}
+.lv-pip.is-on {
+  background: linear-gradient(180deg, #FFFFFF, #7FE0D2 55%, #17A398 100%);
+  box-shadow: 0 0 7px rgba(63, 209, 192, 0.9);
+}
+
+/* ==========================================================================
+   HUD additions — shield, droplets, ghost, toast
+   ========================================================================== */
+
+.hud-left {
+  position: absolute;
+  left: calc(16px + var(--safe-l));
+  top: calc(112px + var(--safe-t));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.hud-shield { min-width: 118px; padding: 9px 14px; }
+.hud-drops, .hud-ghost { min-width: 0; padding: 7px 13px; display: flex; align-items: center; gap: 7px; }
+.hud-drops span { position: relative; font-family: var(--font-display); font-weight: 800; font-size: 17px; color: var(--aero-deep); }
+.hud-ghost { flex-direction: column; align-items: flex-start; gap: 0; }
+.hud-ghost .hud-value { font-size: 17px; }
+.hud-ghost.is-ahead .hud-value { color: var(--teal-deep); }
+.hud-ghost.is-behind .hud-value { color: #C98A00; }
+
+/* Wraps, so a fully upgraded capacity never pushes the chip off-screen. */
+.pip-row { position: relative; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; max-width: 148px; }
+
+/* A pip is a droplet: full ones are wet and lit, spent ones are empty glass. */
+.pip {
+  width: 15px; height: 15px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: rgba(255,255,255,0.30);
+  border: 1px solid rgba(255,255,255,0.75);
+  box-shadow: inset 0 1px 3px var(--shadow-1);
+  transition: background 220ms ease, box-shadow 220ms ease, transform 220ms ease;
+}
+.pip.is-full {
+  background: radial-gradient(circle at 62% 34%, #FFFFFF 0%, #BFF7EC 28%, #3FD1C0 62%, #17A398 100%);
+  box-shadow: 0 0 10px rgba(63, 209, 192, 0.9), inset 0 -2px 3px rgba(12, 90, 84, 0.3);
+}
+.pip.is-popping { animation: pip-pop 420ms cubic-bezier(0.2, 1.1, 0.4, 1); }
+@keyframes pip-pop {
+  0%   { transform: rotate(-45deg) scale(1.5); filter: brightness(2.2); }
+  100% { transform: rotate(-45deg) scale(1); filter: none; }
+}
+
+.regen-tube {
+  position: relative;
+  margin-top: 6px;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.4);
+  border: 1px solid rgba(255,255,255,0.7);
+}
+.regen-tube i {
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, #7FE0D2, #FFFFFF);
+  transition: width 200ms linear;
+}
+
+/* Zero pips: the whole chip pulses. This state must never be a surprise. */
+.hud-shield.is-exposed {
+  animation: shield-warn 1.05s ease-in-out infinite;
+  box-shadow: 0 8px 22px var(--shadow-1), 0 0 20px rgba(255, 150, 120, 0.85), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+@keyframes shield-warn {
+  0%, 100% { box-shadow: 0 8px 22px var(--shadow-1), 0 0 14px rgba(255, 150, 120, 0.5), 0 1px 0 rgba(255,255,255,0.9) inset; }
+  50%      { box-shadow: 0 8px 22px var(--shadow-1), 0 0 30px rgba(255, 150, 120, 1), 0 1px 0 rgba(255,255,255,0.9) inset; }
+}
+
+.hud-sub { position: relative; display: block; font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
+
+.hud-mult {
+  position: relative;
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-family: var(--font-display); font-weight: 800; font-size: 12px;
+  color: #6A4B00;
+  background: linear-gradient(180deg, #FFE985, #FFD24C);
+}
+
+/* Checkpoint / portal announcement, below the world name. */
+.hud-toast {
+  position: absolute;
+  left: 50%; top: 25%;
+  transform: translateX(-50%);
+  font-family: var(--font-display); font-weight: 800;
+  font-size: clamp(15px, 2.3vmin, 22px);
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 16px rgba(255,255,255,0.9), 0 2px 10px var(--shadow-3);
+  opacity: 0;
+  white-space: nowrap;
+}
+.hud-toast.is-shown { animation: toast-flash 1.9s ease-out; }
+@keyframes toast-flash {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  16%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+  72%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+}
+
+/* ==========================================================================
+   Results additions
+   ========================================================================== */
+
+.res-cause { margin-top: -6px; font-size: 14px; }
+
+.earn-row { position: relative; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 4px 0 12px; }
+.earn {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 15px;
+  border-radius: 999px;
+  font-family: var(--font-display); font-weight: 800; font-size: 16px;
+  color: var(--aero-deep);
+  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(190,235,250,0.55));
+  border: 1px solid rgba(255,255,255,0.9);
+}
+.earn-label { font-size: 11px; letter-spacing: 0.1em; color: var(--ink-soft); }
+
+.levelup {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display); font-weight: 800; font-size: 15px;
+  color: #4A3272;
+  background: linear-gradient(180deg, #FFFFFF 0%, #E8DCFA 48%, #C9A9F0 52%, #E4D6FA 100%);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 6px 18px rgba(201, 169, 240, 0.6);
+  animation: badge-pop 620ms cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+/* ==========================================================================
+   Rebirth
+   ========================================================================== */
+
+.rebirth-meter { position: relative; margin: 10px 0 16px; }
+.progress-tube--tall { height: 14px; }
+
+.reb-grid { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; text-align: left; margin-bottom: 14px; }
+.reb-col ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+.reb-col--keep li { color: var(--teal-deep); }
+.reb-col--reset li { color: #B4506E; }
+
+.reb-payout {
+  position: relative;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-bottom: 14px;
+  font-family: var(--font-display); font-weight: 800; font-size: 26px;
+  color: #5A3F86;
+}
+.reb-payout .coin-icon { width: 24px; height: 24px; }
+
+/* ==========================================================================
+   Leaderboard + achievements
+   ========================================================================== */
+
+.net-state {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.8);
+}
+.net-state.is-online { color: var(--teal-deep); }
+.net-state.is-offline { color: #8A6A3A; }
+
+.board { position: relative; list-style: none; margin: 0 0 14px; padding: 0; max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; text-align: left; }
+.board-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  background: rgba(255,255,255,0.45);
+  border: 1px solid rgba(255,255,255,0.7);
+  margin-bottom: 6px;
+}
+.board-row.is-me { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(190,235,250,0.7)); box-shadow: 0 0 0 2px rgba(255,233,133,0.85); }
+.board-rank { font-family: var(--font-display); font-weight: 800; color: var(--ink-soft); }
+.board-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-score { font-family: var(--font-display); font-weight: 800; color: var(--aero-deep); }
+.board-dist { font-size: 12px; color: var(--ink-soft); }
+
+.text-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui); font-size: 14px;
+  color: var(--ink);
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: inset 0 2px 5px var(--shadow-1);
+  outline: none;
+}
+.text-input:focus { box-shadow: inset 0 2px 5px var(--shadow-1), 0 0 0 3px rgba(255, 233, 133, 0.8); }
+
+.ach-list { position: relative; display: flex; flex-direction: column; gap: 7px; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; text-align: left; margin-bottom: 14px; }
+.ach-item {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  gap: 11px;
+  align-items: center;
+  padding: 9px 13px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.42);
+  border: 1px solid rgba(255,255,255,0.7);
+}
+.ach-item.is-earned { background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(190,240,225,0.6)); }
+.ach-mark {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 800; color: #fff;
+  background: rgba(140,180,200,0.45);
+}
+.ach-item.is-earned .ach-mark { background: linear-gradient(180deg, #7FE0D2, #17A398); box-shadow: 0 0 10px rgba(63,209,192,0.8); }
+.ach-name { font-weight: 700; font-size: 14px; color: var(--aero-deep); }
+.ach-desc { font-size: 12px; color: var(--ink-soft); }
+.ach-reward { display: flex; align-items: center; gap: 5px; font-family: var(--font-display); font-weight: 800; font-size: 13px; color: var(--aero-deep); }
+
+/* ==========================================================================
+   Photo mode
+   ========================================================================== */
+
+.photo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + var(--safe-b));
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(620px, calc(100% - 32px));
+  padding: 16px 20px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  box-shadow: 0 18px 46px var(--shadow-2), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.photo-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; margin-bottom: 10px; }
+.photo-field { display: block; text-align: left; }
+.photo-field > span { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 5px; }
+.photo-field i { font-style: normal; color: var(--ink-soft); }
+.photo-field input[type="range"] { height: 10px; }
+
+/* In photo mode everything else gets out of the way. */
+body.is-photo #hud, body.is-photo .screen { display: none !important; }
+
+/* ==========================================================================
    Responsive
    ========================================================================== */
 
@@ -673,17 +1184,33 @@ body.is-touch .icon-btn { display: block; }
   .result-grid { grid-template-columns: repeat(3, 1fr); gap: 12px 6px; }
   .gel--big { padding: 14px 34px; font-size: 19px; }
   .panel--stats { flex-direction: row; }
+
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(142px, 1fr)); gap: 9px; }
+  .reb-grid { grid-template-columns: 1fr; gap: 8px; }
+  .wallet { gap: 7px; }
+  .coin { padding: 6px 11px; font-size: 14px; }
+  .xp-tube { width: 56px; }
+  .hud-left { top: calc(104px + var(--safe-t)); }
+  .hud-shield { min-width: 104px; padding: 8px 12px; }
+  .board-row { grid-template-columns: 28px 1fr auto; font-size: 13px; }
+  .board-dist { display: none; }
 }
 
-/* Short/landscape phones: keep the title screen from overflowing. */
+/* Short/landscape phones: keep the hub from overflowing. */
 @media (max-height: 560px) {
   .logo-text { font-size: clamp(34px, 9vmin, 56px); }
-  .tagline { margin-bottom: 12px; }
-  .panel--stats, .panel--trails { margin-top: 10px; padding: 12px 16px; }
-  .trail-dot { width: 34px; height: 34px; }
+  .tagline { margin-bottom: 10px; }
+  .panel--stats, .panel--worlds { margin-top: 10px; padding: 12px 16px; }
+  .wallet { margin-bottom: 10px; }
+  .card-grid { max-height: 42vh; }
+  .ach-list { max-height: 40vh; }
+  /* The boost pad sits where the photo bar wants to be; keep them apart. */
+  .photo-bar { padding: 10px 16px 8px; }
+  .photo-controls { margin-bottom: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #bokeh, .logo-text::after, .boot-orb, .hud-biome.is-shown { animation: none; }
+  #bokeh, .logo-text::after, .boot-orb, .hud-biome.is-shown,
+  .hud-toast.is-shown, .hud-shield.is-exposed, .pip.is-popping { animation: none; }
   .screen.is-active { animation: none; }
 }

@@ -143,12 +143,14 @@ class OrbField {
     this.count = 0;
   }
 
-  spawn(x, y, z, big = false) {
+  spawn(x, y, z, big = false, rng = null) {
     const i = this.freeList.pop();
     if (i === undefined) return -1; // pool exhausted; skip rather than allocate
     this.active[i] = 1;
     this.px[i] = x; this.py[i] = y; this.pz[i] = z;
-    this.phase[i] = Math.random() * Math.PI * 2;
+    // Seeded when a generator is supplied, so a seed reproduces even the bob
+    // phase — which matters, because the bob offset is part of the pickup test.
+    this.phase[i] = (rng ? rng.float() : Math.random()) * Math.PI * 2;
     this.big[i] = big ? 1 : 0;
     this.pop[i] = 0;
     this.count++;
@@ -332,29 +334,33 @@ export function createCollectibles(sceneCore, { capacityOrbs = 300, cheapGlass =
 
   /* --- Spawners --------------------------------------------------------- */
 
-  function spawnOrb(x, y, z, big = false) {
-    return orbs.spawn(x, y, z, big);
+  function spawnOrb(x, y, z, big = false, rng = null) {
+    return orbs.spawn(x, y, z, big, rng);
   }
 
-  function spawnRing(x, y, z, { radius = 7, tilt = 0, accent = '#7FE0D2' } = {}) {
+  function spawnRing(x, y, z, { radius = 7, tilt = 0, accent = '#7FE0D2', rng = null } = {}) {
     const g = ringPool.acquire();
     g.visible = true;
     g.position.set(x, y, z);
     g.rotation.set(0, 0, tilt);
     g.scale.setScalar(radius / 7);
     g.userData.glowMat.emissive.set(accent);
-    const rec = { g, x, y, z, radius, passed: false, spin: randRange(-0.5, 0.5), flash: 0 };
+    const spin = rng ? rng.range(-0.5, 0.5) : randRange(-0.5, 0.5);
+    const rec = { g, x, y, z, radius, passed: false, spin, flash: 0 };
     rings.push(rec);
     return rec;
   }
 
-  function spawnStream(x, y, z, accentColor = '#8CFFF0') {
-    const vi = (Math.random() * STREAM_VARIANTS.length) | 0;
+  function spawnStream(x, y, z, accentColor = '#8CFFF0', rng = null) {
+    // The variant decides the ribbon's whole flight path, so it is gameplay,
+    // not decoration — it must come from the seeded generator.
+    const r0 = rng ? rng.float() : Math.random();
+    const vi = (r0 * STREAM_VARIANTS.length) | 0;
     const mesh = streamPool.acquire();
     mesh.geometry = streamGeos[vi];
     mesh.visible = true;
     mesh.position.set(x, y, z);
-    mesh.material.map.offset.y = Math.random();
+    mesh.material.map.offset.y = rng ? rng.float() : Math.random();
     mesh.material.color.set(accentColor).multiplyScalar(0.8);
     const rec = { mesh, variant: STREAM_VARIANTS[vi], x, y, z, length: STREAM_LENGTH };
     streams.push(rec);
@@ -396,7 +402,7 @@ export function createCollectibles(sceneCore, { capacityOrbs = 300, cheapGlass =
    *   frame. Everything below tests the segment prev -> current rather than a
    *   single point, so nothing can be tunnelled through at high speed.
    */
-  function update(dt, elapsed, player, prev) {
+  function update(dt, elapsed, player, prev, mods = {}) {
     events.length = 0;
 
     const px = player.state.pos.x;
@@ -406,6 +412,29 @@ export function createCollectibles(sceneCore, { capacityOrbs = 300, cheapGlass =
     const prevY = prev.y;
     const prevZ = prev.z;
     const dz = prevZ - pz; // positive: distance covered this frame
+
+    /* --- Magnet upgrade -------------------------------------------------
+       Orbs the wisp is about to reach drift toward its lane. Applied before
+       orbs.update() so the instance matrices this frame already reflect the
+       pull — otherwise the orb visibly snaps a frame after it was collected.
+       The pull is deliberately soft (lambda 3.4): it should feel like the wisp
+       has a field around it, not like orbs teleport into it. */
+    const magnet = mods.magnet || 0;
+    if (magnet > 0) {
+      const reach = magnet + ORB_PICKUP_R;
+      const k = 1 - Math.exp(-3.4 * dt);
+      for (let i = 0; i < orbs.capacity; i++) {
+        if (!orbs.active[i] || orbs.pop[i] > 0) continue;
+        const oz = orbs.pz[i];
+        // Only orbs still ahead, and close enough to be worth testing.
+        if (oz > pz || oz < pz - 60) continue;
+        const dx = px - orbs.px[i];
+        const dy = py - orbs.py[i];
+        if (dx * dx + dy * dy > reach * reach) continue;
+        orbs.px[i] += dx * k;
+        orbs.py[i] += dy * k;
+      }
+    }
 
     orbs.update(dt, elapsed);
 

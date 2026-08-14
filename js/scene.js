@@ -10,7 +10,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sunTexture, flareRingTexture, streakTexture, bokehTexture } from './textures.js';
-import { clamp } from './utils.js';
+import { clamp, lerp } from './utils.js';
+import { BASE_PALETTE } from './worlds.js';
 
 /** Direction the sun sits in, shared by the sky shader, key light and flare. */
 export const SUN_DIR = new THREE.Vector3(0.34, 0.42, -1).normalize();
@@ -71,23 +72,27 @@ const SKY_FRAG = /* glsl */ `
    Default (Sky biome) palette — world.js overrides this as biomes blend.
    ========================================================================== */
 
-export const DEFAULT_PALETTE = {
-  skyTop: '#1273B5',
-  skyMid: '#40B8E4',
-  skyHorizon: '#B8E6F8',
-  skyGround: '#4EA6D2',
-  fog: '#7FC6E8',
-  fogNear: 380,
-  fogFar: 1100,
-  sunColor: '#FFE985',
-  sunGlow: 1.0,
-  hemiSky: '#BFE9FA',
-  hemiGround: '#7FB9CF',
-  hemiIntensity: 0.72,
-  keyIntensity: 0.85,
-  envIntensity: 1.05,
-  water: 0,
-};
+/**
+ * The opening palette. Sourced from worlds.js so there is exactly one place
+ * that defines what a palette field is — a second copy here drifted out of
+ * sync the moment a field was added.
+ */
+export const DEFAULT_PALETTE = { ...BASE_PALETTE };
+
+/**
+ * Base tone-mapping exposure, before the player's Brightness setting and the
+ * per-World trim are applied.
+ *
+ * v1 sat at 0.98 and read as blown out: ACES plus a sky that is already near
+ * white at the horizon plus bloom is a lot of light stacked in one place. 0.86
+ * keeps the image bright and optimistic — Frutiger Aero is not a moody look —
+ * while leaving headroom so the emissive orbs, ring rims and the sun are the
+ * things that clip, which is the point of them.
+ *
+ * Perceived brightness is monitor-dependent and genuinely subjective, so this
+ * is only the default: Settings exposes a Brightness slider over it.
+ */
+export const BASE_EXPOSURE = 0.86;
 
 /* ==========================================================================
    Scene factory
@@ -105,8 +110,7 @@ export function createSceneCore(canvasEl, { pixelRatioCap = 2, antialias = true 
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  // Slightly hot: Frutiger Aero wants a bright, over-lit, optimistic image.
-  renderer.toneMappingExposure = 0.98;
+  renderer.toneMappingExposure = BASE_EXPOSURE;
 
   /* --- Scene + camera -------------------------------------------------- */
   const scene = new THREE.Scene();
@@ -208,7 +212,16 @@ export function createSceneCore(canvasEl, { pixelRatioCap = 2, antialias = true 
   const palette = { ...DEFAULT_PALETTE };
   let bokehEnabled = true;
 
-  /** Blend the live sky/fog/light state toward a palette (used by biomes). */
+  /**
+   * Blend the live sky/fog/light state toward a palette.
+   *
+   * `mix` below 1 eases every field, not just the colours. That matters at a
+   * Portal: strata cross-fade smoothly over hundreds of metres, but a Portal
+   * swaps World in a single frame, and a hard cut in fog distance or light
+   * intensity reads as a glitch rather than a transition. main.js drives this
+   * with a frame-rate independent factor so the swap lands as a fast, deliberate
+   * wipe instead of a pop.
+   */
   function applyPalette(p, mix = 1) {
     if (mix >= 1) {
       skyUniforms.uTop.value.set(p.skyTop);
@@ -219,6 +232,14 @@ export function createSceneCore(canvasEl, { pixelRatioCap = 2, antialias = true 
       scene.fog.color.set(p.fog);
       hemi.color.set(p.hemiSky);
       hemi.groundColor.set(p.hemiGround);
+
+      skyUniforms.uSunGlow.value = p.sunGlow;
+      scene.fog.near = p.fogNear;
+      scene.fog.far = p.fogFar;
+      hemi.intensity = p.hemiIntensity;
+      key.intensity = p.keyIntensity;
+      scene.environmentIntensity = p.envIntensity;
+      worldExposure = p.exposure ?? 1;
     } else {
       skyUniforms.uTop.value.lerp(_c(p.skyTop), mix);
       skyUniforms.uMid.value.lerp(_c(p.skyMid), mix);
@@ -228,14 +249,35 @@ export function createSceneCore(canvasEl, { pixelRatioCap = 2, antialias = true 
       scene.fog.color.lerp(_c(p.fog), mix);
       hemi.color.lerp(_c(p.hemiSky), mix);
       hemi.groundColor.lerp(_c(p.hemiGround), mix);
+
+      skyUniforms.uSunGlow.value = lerp(skyUniforms.uSunGlow.value, p.sunGlow, mix);
+      scene.fog.near = lerp(scene.fog.near, p.fogNear, mix);
+      scene.fog.far = lerp(scene.fog.far, p.fogFar, mix);
+      hemi.intensity = lerp(hemi.intensity, p.hemiIntensity, mix);
+      key.intensity = lerp(key.intensity, p.keyIntensity, mix);
+      scene.environmentIntensity = lerp(scene.environmentIntensity, p.envIntensity, mix);
+      worldExposure = lerp(worldExposure, p.exposure ?? 1, mix);
     }
-    skyUniforms.uSunGlow.value = p.sunGlow;
-    scene.fog.near = p.fogNear;
-    scene.fog.far = p.fogFar;
-    hemi.intensity = p.hemiIntensity;
-    key.intensity = p.keyIntensity;
-    scene.environmentIntensity = p.envIntensity;
+    applyExposure();
     Object.assign(palette, p);
+  }
+
+  /* --- Exposure ---------------------------------------------------------
+     Two independent factors: the player's Brightness setting, and a per-World
+     trim (Aurora Reach lifts a little, Crystal Atrium and Solar Bloom pull
+     back). Kept separate so a World can never override what the player chose,
+     only nudge around it. */
+  let userExposure = 1;
+  let worldExposure = 1;
+
+  function applyExposure() {
+    renderer.toneMappingExposure = BASE_EXPOSURE * userExposure * worldExposure;
+  }
+
+  /** Settings slider, 0.6..1.4 of the tuned default. */
+  function setExposure(scale) {
+    userExposure = clamp(scale, 0.5, 1.6);
+    applyExposure();
   }
 
   const _tmpColor = new THREE.Color();
@@ -279,7 +321,8 @@ export function createSceneCore(canvasEl, { pixelRatioCap = 2, antialias = true 
 
   return {
     renderer, scene, camera, sky, sun, hemi, key, rim, palette,
-    applyPalette, update, resize, setPixelRatioCap, setBokehEnabled, dispose,
+    applyPalette, setExposure, update, resize, setPixelRatioCap, setBokehEnabled, dispose,
+    get exposure() { return renderer.toneMappingExposure; },
   };
 }
 

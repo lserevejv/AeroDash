@@ -10,8 +10,9 @@
 
 import * as THREE from 'three';
 import { clamp, damp, lerp, randRange } from './utils.js';
-import { glowTexture, sparkTexture } from './textures.js';
+import { glowTexture, sparkTexture, haloRingTexture, prismDiscTexture } from './textures.js';
 import { makeGlassMaterial, makeChromeMaterial } from './scene.js';
+import { TRAILS, SKINS, AURAS } from './shop.js';
 
 /* ==========================================================================
    Tuning
@@ -32,47 +33,8 @@ const TOUCH_GAIN = 0.085;     // screen px -> world units when dragging
 const BOOST_DRAIN = 0.34;     // meter/second while boosting
 const BOOST_MIN_TO_FIRE = 0.06;
 
-/* ==========================================================================
-   Cosmetic trail palettes (meta-progression unlocks)
-   ========================================================================== */
-
-export const TRAILS = {
-  chrome: {
-    name: 'Chrome',
-    core: '#FFFFFF', glow: '#CFE6F2', trail: '#EAF4FA', shell: '#EAF6FB',
-    unlock: null,
-    hint: 'Default',
-  },
-  aqua: {
-    name: 'Aqua',
-    core: '#EAFFFC', glow: '#3FD1C0', trail: '#7FF3E4', shell: '#DBFFFA',
-    unlock: { type: 'score', value: 1500 },
-    hint: 'Score 1,500 in a run',
-  },
-  sunset: {
-    name: 'Sunset',
-    core: '#FFF6DE', glow: '#FFB36B', trail: '#FFD24C', shell: '#FFEFD2',
-    unlock: { type: 'distance', value: 15000 },
-    hint: 'Fly 15,000 m lifetime',
-  },
-  mint: {
-    name: 'Mint',
-    core: '#F6FFEC', glow: '#8CD867', trail: '#BFF29A', shell: '#EDFCE0',
-    unlock: { type: 'score', value: 6000 },
-    hint: 'Score 6,000 in a run',
-  },
-};
-
-/** Which trails a given save file has earned. */
-export function computeUnlocks(save) {
-  const out = [];
-  for (const [key, t] of Object.entries(TRAILS)) {
-    if (!t.unlock) { out.push(key); continue; }
-    if (t.unlock.type === 'score' && save.bestScore >= t.unlock.value) out.push(key);
-    if (t.unlock.type === 'distance' && save.lifetimeDistance >= t.unlock.value) out.push(key);
-  }
-  return out;
-}
+const DEFAULT_TRAIL = TRAILS.trail_chrome;
+const DEFAULT_SKIN = SKINS.skin_dew;
 
 /* ==========================================================================
    Sparkle trail
@@ -226,32 +188,39 @@ class SparkTrail {
 export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false } = {}) {
   const { scene, camera } = sceneCore;
 
-  /* --- Wisp geometry --------------------------------------------------- */
+  /* --- Wisp geometry ---------------------------------------------------
+     Every mesh a skin or aura could need is built here, once. Equipping a
+     cosmetic only toggles visibility and rewrites scales and colours, so it
+     allocates nothing and can be done mid-run without a hitch. */
   const group = new THREE.Group();
   scene.add(group);
 
   // Hot emissive core. emissiveIntensity above 1 pushes it past the bloom
   // threshold so the orb reads as a genuine light source, not a white ball.
-  const core = new THREE.Mesh(
-    new THREE.SphereGeometry(0.6, 24, 18),
-    new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#FFFFFF'),
-      emissive: new THREE.Color(TRAILS.chrome.core),
-      emissiveIntensity: 2.15,
-      roughness: 0.3,
-      metalness: 0,
-    }),
-  );
-  group.add(core);
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#FFFFFF'),
+    emissive: new THREE.Color(DEFAULT_TRAIL.core),
+    emissiveIntensity: 2.15,
+    roughness: 0.3,
+    metalness: 0,
+  });
+
+  // Two core shapes; a skin picks one. The faceted core catches the
+  // environment map in hard planes, which is a completely different read from
+  // the smooth bead even though the material is shared.
+  const coreSphere = new THREE.Mesh(new THREE.SphereGeometry(0.6, 24, 18), coreMat);
+  const coreFacet = new THREE.Mesh(new THREE.IcosahedronGeometry(0.72, 0), coreMat);
+  coreFacet.visible = false;
+  group.add(coreSphere, coreFacet);
 
   // Translucent outer shell — the wet, glassy bead look.
   const shell = new THREE.Mesh(
     new THREE.SphereGeometry(0.98, 28, 20),
-    makeGlassMaterial({ color: TRAILS.chrome.shell, cheap: cheapGlass, opacity: 0.38 }),
+    makeGlassMaterial({ color: DEFAULT_TRAIL.shell, cheap: cheapGlass, opacity: 0.38 }),
   );
   group.add(shell);
 
-  // Spinning chrome halo — pure Aero jewellery.
+  // Spinning chrome halos — pure Aero jewellery.
   const halo = new THREE.Mesh(
     new THREE.TorusGeometry(1.35, 0.055, 12, 48),
     makeChromeMaterial({ roughness: 0.06 }),
@@ -269,7 +238,7 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
   // Soft additive halo sprite so the wisp glows even against a bright sky.
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTexture('#ffffff', 2.4),
-    color: new THREE.Color(TRAILS.chrome.glow),
+    color: new THREE.Color(DEFAULT_TRAIL.glow),
     blending: THREE.AdditiveBlending,
     transparent: true,
     depthWrite: false,
@@ -280,10 +249,64 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
   group.add(glow);
 
   // Local light so the wisp actually illuminates nearby clouds and rings.
-  const lamp = new THREE.PointLight(new THREE.Color(TRAILS.chrome.glow), 26, 46, 2);
+  const lamp = new THREE.PointLight(new THREE.Color(DEFAULT_TRAIL.glow), 26, 46, 2);
   group.add(lamp);
 
-  const trail = new SparkTrail(scene, trailCount, TRAILS.chrome.trail);
+  /* --- Aura layers ------------------------------------------------------ */
+  const auraRing = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: haloRingTexture('#FFFFFF'),
+    color: new THREE.Color('#CFEFFA'),
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0,
+    fog: false,
+  }));
+  auraRing.visible = false;
+  group.add(auraRing);
+
+  const auraPrism = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: prismDiscTexture(),
+    color: new THREE.Color('#FFFFFF'),
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0,
+    fog: false,
+  }));
+  auraPrism.visible = false;
+  group.add(auraPrism);
+
+  // Orbiting motes. A dozen sprites is cheaper to reason about than a Points
+  // cloud here, because they orbit on fixed analytic paths rather than
+  // simulating, and there are never more than AURA_MOTES of them.
+  const AURA_MOTES = 12;
+  const auraMotes = [];
+  for (let i = 0; i < AURA_MOTES; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture('#FFFFFF', 2.2),
+      color: new THREE.Color('#FFE985'),
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0,
+      fog: false,
+    }));
+    s.visible = false;
+    s.scale.setScalar(0.5);
+    group.add(s);
+    auraMotes.push({
+      sprite: s,
+      // Each mote rides its own tilted circle so the swarm never looks like a
+      // flat dial spinning in place.
+      phase: (i / AURA_MOTES) * Math.PI * 2,
+      radius: 1.7 + (i % 3) * 0.42,
+      tilt: (i % 4) * 0.5,
+      rate: 0.8 + (i % 5) * 0.16,
+    });
+  }
+
+  const trail = new SparkTrail(scene, trailCount, DEFAULT_TRAIL.trail);
 
   /* --- State ------------------------------------------------------------ */
   const state = {
@@ -299,8 +322,43 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
     invuln: 0,
     distance: 0,
     enabled: false,
-    trailKey: 'chrome',
   };
+
+  /* --- Equipped cosmetics ------------------------------------------------ */
+  let trailDef = DEFAULT_TRAIL;
+  let skinDef = DEFAULT_SKIN;
+  let auraDef = AURAS.aura_none;
+  let activeCore = coreSphere;
+  /** Advances only while the trail's palette actually shifts. */
+  let shiftPhase = 0;
+
+  const _shiftA = new THREE.Color();
+  const _shiftB = new THREE.Color();
+  const _shiftOut = new THREE.Color();
+
+  /**
+   * Premium trails cycle their palette. The ramp is walked as a loop of pastel
+   * stops rather than a hue rotation — a raw hue sweep leaves the Frutiger Aero
+   * range almost immediately and lands in saturated primaries.
+   */
+  function updateShift(dt) {
+    const shift = trailDef.shift;
+    if (!shift) return;
+    shiftPhase += dt * shift.speed;
+    const ramp = shift.ramp;
+    const t = (shiftPhase % 1 + 1) % 1;
+    const scaled = t * ramp.length;
+    const i = Math.floor(scaled) % ramp.length;
+    const f = scaled - Math.floor(scaled);
+    _shiftA.set(ramp[i]);
+    _shiftB.set(ramp[(i + 1) % ramp.length]);
+    _shiftOut.copy(_shiftA).lerp(_shiftB, f);
+
+    glow.material.color.copy(_shiftOut);
+    lamp.color.copy(_shiftOut);
+    trail.material.uniforms.uColor.value.copy(_shiftOut).multiplyScalar(1.2);
+    auraRing.material.color.copy(_shiftOut);
+  }
 
   /* --- Camera rig ------------------------------------------------------- */
   const camRig = {
@@ -421,7 +479,8 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
     const wantBoost = state.boostHeld && state.boost > BOOST_MIN_TO_FIRE;
     state.boosting = wantBoost;
     if (state.boosting) {
-      state.boost = clamp(state.boost - BOOST_DRAIN * dt, 0, 1);
+      // The Boost Efficiency upgrade slows the drain (mods.boostDrain <= 1).
+      state.boost = clamp(state.boost - BOOST_DRAIN * (mods.boostDrain ?? 1) * dt, 0, 1);
     }
 
     /* --- Speed --------------------------------------------------------- */
@@ -431,6 +490,7 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
     let targetSpeed = BASE_SPEED;
     if (state.boosting) targetSpeed *= BOOST_MULT;
     if (state.riding) targetSpeed *= STREAM_MULT;
+
     // A gentle ramp so later stretches of a run feel quicker.
     targetSpeed *= 1 + Math.min(0.22, state.distance / 26000);
     if (state.hitTimer > 0) targetSpeed *= HIT_MULT;
@@ -467,15 +527,30 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
     halo2.rotation.x += dt * 0.7;
     halo2.rotation.y += dt * (0.9 + energy * 1.8);
 
-    // Breathe the core, and flare it while boosting.
-    const pulse = 1 + Math.sin(elapsed * 3.4) * 0.045 + energy * 0.16;
-    core.scale.setScalar(pulse);
-    core.material.emissiveIntensity = 2.15 + energy * 1.9;
-    glow.scale.setScalar(2.2 * (1 + energy * 0.55) * (1 + Math.sin(elapsed * 2.1) * 0.03));
-    glow.material.opacity = 0.24 + energy * 0.2;
+    // Breathe the core, and flare it while boosting. The skin sets the rate and
+    // the baseline emissive, so a Firefly throbs fast and hot while a Chrome
+    // Bead barely glows at all.
+    const pulse = 1 + Math.sin(elapsed * skinDef.pulse) * 0.045 + energy * 0.16;
+    activeCore.scale.setScalar(pulse * skinDef.coreScale);
+    activeCore.rotation.y += dt * 0.9;
+    coreMat.emissiveIntensity = skinDef.emissive + energy * 1.9;
+    glow.scale.setScalar(2.2 * skinDef.glow * (1 + energy * 0.55) * (1 + Math.sin(elapsed * 2.1) * 0.03));
+    glow.material.opacity = (0.24 + energy * 0.2) * skinDef.glow;
     lamp.intensity = 22 + energy * 26;
-    // Flash white briefly after a knock so contact always registers visually.
-    shell.material.opacity = state.invuln > 0 ? 0.62 : (cheapGlass ? 0.38 : 1);
+    // Flash the shell briefly after a knock so contact always registers.
+    const shellBase = cheapGlass ? 0.38 * skinDef.shellOpacity : Math.min(1, skinDef.shellOpacity);
+    shell.material.opacity = state.invuln > 0 ? 0.62 : shellBase;
+
+    // Zero shield left: pulse the whole wisp so the danger state is impossible
+    // to miss even with the HUD out of the corner of your eye.
+    if (mods.exposed) {
+      const warn = 0.5 + Math.sin(elapsed * 7.5) * 0.5;
+      coreMat.emissiveIntensity += warn * 1.6;
+      glow.material.opacity += warn * 0.22;
+    }
+
+    updateShift(dt);
+    updateAura(dt, elapsed, energy);
 
     trail.update(dt, state.pos, energy, true);
 
@@ -550,14 +625,90 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
 
   function shake(amount) { camRig.shake = Math.min(1.4, camRig.shake + amount); }
 
-  function setTrail(key) {
-    const t = TRAILS[key] || TRAILS.chrome;
-    state.trailKey = key in TRAILS ? key : 'chrome';
-    core.material.emissive.set(t.core);
-    glow.material.color.set(t.glow);
-    lamp.color.set(t.glow);
-    shell.material.color.set(t.shell);
-    trail.setColor(t.trail);
+  /* ======================================================================
+     Cosmetics
+     ====================================================================== */
+
+  /** @param {object} t a trail entry from shop.js (already resolved + owned). */
+  function setTrail(t) {
+    trailDef = t || DEFAULT_TRAIL;
+    coreMat.emissive.set(trailDef.core);
+    glow.material.color.set(trailDef.glow);
+    lamp.color.set(trailDef.glow);
+    shell.material.color.set(trailDef.shell);
+    trail.setColor(trailDef.trail);
+    auraRing.material.color.set(trailDef.glow);
+    shiftPhase = 0;
+  }
+
+  /** @param {object} s a skin entry from shop.js. */
+  function setSkin(s) {
+    skinDef = s || DEFAULT_SKIN;
+    const facet = skinDef.core === 'facet';
+    coreSphere.visible = !facet;
+    coreFacet.visible = facet;
+    activeCore = facet ? coreFacet : coreSphere;
+    activeCore.scale.setScalar(skinDef.coreScale);
+
+    shell.scale.setScalar(skinDef.shellScale);
+    coreMat.metalness = skinDef.metal;
+    coreMat.emissiveIntensity = skinDef.emissive;
+    coreMat.needsUpdate = true;
+
+    halo.visible = skinDef.halos >= 1;
+    halo2.visible = skinDef.halos >= 2;
+  }
+
+  /** @param {object} a an aura entry from shop.js. */
+  function setAura(a) {
+    auraDef = a || AURAS.aura_none;
+    const mode = auraDef.mode;
+    auraRing.visible = mode === 'halo';
+    auraPrism.visible = mode === 'prism';
+    const moteCount = mode === 'motes' ? (auraDef.count || 0) : 0;
+    for (let i = 0; i < auraMotes.length; i++) {
+      const m = auraMotes[i];
+      m.sprite.visible = i < moteCount;
+      if (i < moteCount) {
+        m.sprite.material.color.set(auraDef.color);
+        m.sprite.scale.setScalar(0.42 * (auraDef.size || 1));
+      }
+    }
+    if (mode === 'halo') auraRing.material.color.set(auraDef.color);
+    if (mode === 'prism') auraPrism.material.color.set(auraDef.color);
+  }
+
+  function updateAura(dt, elapsed, energy) {
+    switch (auraDef.mode) {
+      case 'halo': {
+        const t = Math.sin(elapsed * auraDef.speed);
+        auraRing.scale.setScalar(auraDef.size * (1 + t * 0.09 + energy * 0.2));
+        auraRing.material.opacity = 0.22 + t * 0.07 + energy * 0.14;
+        break;
+      }
+      case 'prism': {
+        auraPrism.material.rotation += dt * auraDef.speed;
+        auraPrism.scale.setScalar(auraDef.size * (1 + energy * 0.24));
+        auraPrism.material.opacity = 0.18 + Math.sin(elapsed * 0.9) * 0.05 + energy * 0.12;
+        break;
+      }
+      case 'motes': {
+        for (const m of auraMotes) {
+          if (!m.sprite.visible) continue;
+          const a = elapsed * auraDef.speed * m.rate + m.phase;
+          // Orbit in a circle tipped out of the XY plane, so motes weave in
+          // front of and behind the wisp instead of ringing it flatly.
+          m.sprite.position.set(
+            Math.cos(a) * m.radius,
+            Math.sin(a) * m.radius * Math.cos(m.tilt),
+            Math.sin(a) * m.radius * Math.sin(m.tilt),
+          );
+          m.sprite.material.opacity = 0.5 + Math.sin(a * 2) * 0.2 + energy * 0.2;
+        }
+        break;
+      }
+      default: break;
+    }
   }
 
   function reset() {
@@ -603,7 +754,8 @@ export function createPlayer(sceneCore, { trailCount = 260, cheapGlass = false }
 
   return {
     group, state, trail, camRig,
-    update, reset, knock, shake, addBoost, setTrail, setEnabled, onResize, dispose,
+    update, reset, knock, shake, addBoost, setEnabled, onResize, dispose,
+    setTrail, setSkin, setAura,
     get position() { return state.pos; },
     set boostHeld(v) { state.boostHeld = v; },
     get baseSpeed() { return BASE_SPEED; },
