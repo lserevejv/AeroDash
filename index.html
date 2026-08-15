@@ -14,18 +14,9 @@
 
 <link rel="stylesheet" href="css/style.css" />
 
-<!--
-  Three.js is pulled from a CDN via an import map: no bundler, no npm install, no build step.
-  Version is pinned so the game can never break under us from an upstream release.
--->
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.185.1/examples/jsm/"
-  }
-}
-</script>
+<!-- Warm up both mirrors so whichever one answers is already connected. -->
+<link rel="preconnect" href="https://unpkg.com" crossorigin />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 </head>
 <body>
 
@@ -54,7 +45,11 @@
 <section id="screen-offline" class="screen">
   <div class="panel">
     <h2 class="panel-title">Couldn't reach the CDN</h2>
-    <p>AERODRIFT loads Three.js from <code>unpkg.com</code>. Check your connection and reload.</p>
+    <p>
+      AERODRIFT loads Three.js from <code>unpkg.com</code>, falling back to
+      <code>cdn.jsdelivr.net</code>. Neither answered — check your connection,
+      or any ad blocker or proxy that might be blocking them, and reload.
+    </p>
     <p class="muted small">
       Also note: browsers block ES modules on <code>file://</code>. Serve the folder over HTTP —
       e.g. <code>python3 -m http.server</code> — then open <code>http://localhost:8000</code>.
@@ -428,20 +423,98 @@
   </div>
 </div>
 
-<!-- Fallback: if the module graph never boots (CDN blocked, file:// module block), say so. -->
+<!--
+  Loader.
+
+  Three.js comes from a CDN via an import map: no bundler, no npm install, no
+  build step, and the version is pinned so an upstream release can never break
+  the game under us.
+
+  Two things this has to get right that a static import map cannot:
+
+  1. MIRRORS. An import map has exactly one URL per specifier, so if that host
+     is unreachable — an ad blocker, a corporate proxy, a CDN outage — the game
+     is simply dead. Probing first and writing the map for whichever mirror
+     answers gives a second chance. unpkg and jsDelivr both serve the raw npm
+     tree at identical paths, so the two are drop-in interchangeable.
+
+  2. FAILING FAST. When a module's dependency 404s, the module never executes,
+     so nothing inside main.js can report it — a `.catch()` on boot() never
+     runs. The old backstop was a 12-second timer, and in practice a blocked
+     CDN left the player staring at a frozen "Warming up the sky…" for ~25s
+     before anything explained why. Probing with an explicit timeout turns that
+     into a few seconds and an actionable message.
+
+  The import map is injected before any module script is loaded, which is the
+  only ordering requirement browsers place on it.
+-->
 <script>
-  setTimeout(function () {
-    if (!window.__AERODRIFT_BOOTED) {
-      document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
-      var el = document.getElementById('screen-offline');
-      if (el) el.classList.add('is-active');
-    }
-  }, 12000);
+(function () {
+  var VERSION = '0.185.1';
+  var MIRRORS = [
+    'https://unpkg.com/three@' + VERSION + '/',
+    'https://cdn.jsdelivr.net/npm/three@' + VERSION + '/'
+  ];
+  var PROBE_TIMEOUT_MS = 4500;
+
+  var note = document.getElementById('boot-note');
+  function say(text) { if (note) note.textContent = text; }
+
+  function showOffline() {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
+    var el = document.getElementById('screen-offline');
+    if (el) el.classList.add('is-active');
+  }
+
+  /** Resolve true if this mirror actually serves the build we need. */
+  function probe(base) {
+    return new Promise(function (resolve) {
+      if (!window.fetch || !window.AbortController) { resolve(true); return; } // assume ok
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, PROBE_TIMEOUT_MS);
+      fetch(base + 'build/three.module.js', { signal: ctrl.signal })
+        .then(function (r) { clearTimeout(timer); resolve(r.ok); })
+        .catch(function () { clearTimeout(timer); resolve(false); });
+    });
+  }
+
+  function start(base) {
+    var map = document.createElement('script');
+    map.type = 'importmap';
+    map.textContent = JSON.stringify({
+      imports: {
+        'three': base + 'build/three.module.js',
+        'three/addons/': base + 'examples/jsm/'
+      }
+    });
+    document.head.appendChild(map);
+
+    var mod = document.createElement('script');
+    mod.type = 'module';
+    mod.src = 'js/main.js';
+    mod.onerror = showOffline;
+    document.body.appendChild(mod);
+
+    // Backstop for anything the probe cannot see — a mirror that serves the
+    // entry point but not the addons, say.
+    setTimeout(function () { if (!window.__AERODRIFT_BOOTED) showOffline(); }, 15000);
+  }
+
+  function attempt(i) {
+    if (i >= MIRRORS.length) { showOffline(); return; }
+    say(i === 0 ? 'Loading Three.js from CDN' : 'Trying a mirror…');
+    probe(MIRRORS[i]).then(function (ok) {
+      if (ok) start(MIRRORS[i]);
+      else attempt(i + 1);
+    });
+  }
+
+  attempt(0);
+
   document.addEventListener('click', function (e) {
     if (e.target && e.target.dataset && e.target.dataset.action === 'reload') location.reload();
   });
+})();
 </script>
-
-<script type="module" src="js/main.js"></script>
 </body>
 </html>

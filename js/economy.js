@@ -226,40 +226,102 @@ function migrateV1() {
   };
 }
 
-/** Recursive merge that keeps unknown keys from the stored save. */
+/**
+ * Recursive merge that keeps unknown keys from the stored save.
+ *
+ * A stored value may only override a default of a COMPATIBLE type. This is not
+ * defensive decoration: without it a save carrying `stats: null` — which a
+ * truncated write, a hand-edit or a bad export can all produce — replaces the
+ * whole stats object with null, and the next `endRun()` throws while settling
+ * the run. The player would lose progress at exactly the moment they earned it,
+ * and the game would appear to hang on the results screen.
+ *
+ * Refusing the type mismatch keeps the default and the save file loads fine
+ * minus whatever was corrupt, which is always the better outcome.
+ */
 function merge(base, over) {
+  if (!over || typeof over !== 'object') return base;
+
   for (const [k, v] of Object.entries(over)) {
-    if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])) {
-      merge(base[k], v);
-    } else if (v !== undefined) {
-      base[k] = v;
+    if (v === undefined) continue;
+
+    const def = base[k];
+    const defIsPlainObject = def !== null && typeof def === 'object' && !Array.isArray(def);
+    const defIsArray = Array.isArray(def);
+
+    if (defIsPlainObject) {
+      // Only a plain object may override a plain object.
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) merge(def, v);
+      continue;
     }
+    if (defIsArray) {
+      if (Array.isArray(v)) base[k] = v;
+      continue;
+    }
+    if (typeof def === 'number' && typeof v !== 'number') continue;
+    if (typeof def === 'boolean' && typeof v !== 'boolean') continue;
+    if (typeof def === 'string' && typeof v !== 'string') continue;
+
+    base[k] = v;
   }
   return base;
 }
 
-/** Repair anything a hand-edited or partial save could get wrong. */
+/**
+ * Repair anything a hand-edited, truncated or partial save could get wrong.
+ *
+ * `merge()` already refuses type mismatches, so this is the second line: it
+ * fixes values that are the right *type* but still unusable — a negative
+ * Droplet balance, an upgrade at level `NaN`, an empty cosmetics list.
+ * Between them, no stored save should be able to reach the running game in a
+ * shape that throws.
+ */
 function normalise(save) {
+  /* --- Nested objects the game indexes into without checking ----------- */
+  // Cheap insurance: every one of these is read as `save.x.y` somewhere on the
+  // run-settling path, where a throw costs the player the run they just flew.
+  if (!isPlainObject(save.stats)) save.stats = { ...DEFAULT_SAVE.stats };
+  else for (const [k, v] of Object.entries(DEFAULT_SAVE.stats)) {
+    if (!Number.isFinite(save.stats[k])) save.stats[k] = v;
+  }
+  if (!isPlainObject(save.daily)) save.daily = { ...DEFAULT_SAVE.daily };
+  if (!isPlainObject(save.equipped)) save.equipped = { ...DEFAULT_SAVE.equipped };
+  if (!isPlainObject(save.settings)) save.settings = { ...DEFAULT_SAVE.settings };
+  if (!Array.isArray(save.achievements)) save.achievements = [];
+  if (!Array.isArray(save.realmsUnlocked)) save.realmsUnlocked = [];
+
+  /* --- Cosmetics --------------------------------------------------------- */
   if (!Array.isArray(save.ownedCosmetics) || !save.ownedCosmetics.length) {
     save.ownedCosmetics = ['trail_chrome', 'skin_dew', 'aura_none'];
   }
   for (const must of ['trail_chrome', 'skin_dew', 'aura_none']) {
     if (!save.ownedCosmetics.includes(must)) save.ownedCosmetics.push(must);
   }
+
+  /* --- Content ----------------------------------------------------------- */
   if (!Array.isArray(save.worldsUnlocked) || !save.worldsUnlocked.length) {
     save.worldsUnlocked = ['skyshore'];
   }
-  if (!save.upgrades || typeof save.upgrades !== 'object') save.upgrades = {};
+
+  /* --- Upgrades ---------------------------------------------------------- */
+  if (!isPlainObject(save.upgrades)) save.upgrades = {};
   for (const k of Object.keys(save.upgrades)) {
     const n = Math.floor(Number(save.upgrades[k]));
     if (!Number.isFinite(n) || n <= 0) delete save.upgrades[k];
     else save.upgrades[k] = n;
   }
-  for (const k of ['droplets', 'prisms', 'xp', 'lifetimeDistance', 'cycleDistance', 'cycleDroplets']) {
-    if (!Number.isFinite(save.droplets)) save.droplets = 0;
-    if (!Number.isFinite(save[k]) || save[k] < 0) save[k] = 0;
+
+  /* --- Counters ---------------------------------------------------------- */
+  for (const k of [
+    'droplets', 'prisms', 'xp', 'rebirthCount',
+    'lifetimeDistance', 'lifetimeDroplets', 'cycleDistance', 'cycleDroplets',
+    'bestScore', 'bestCombo', 'bestDistance', 'runs',
+  ]) {
+    if (!Number.isFinite(save[k]) || save[k] < 0) save[k] = DEFAULT_SAVE[k] ?? 0;
   }
 }
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 export function writeSave(save) {
   try {
