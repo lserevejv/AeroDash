@@ -32,6 +32,7 @@ import { createAudio } from './audio.js';
 import { createUI } from './ui.js';
 import { createApi } from './net/api.js';
 import { createRecorder, createGhost } from './net/ghosts.js';
+import { installDiagnostics } from './diagnostics.js';
 
 import * as economy from './economy.js';
 import { computeMods } from './upgrades.js';
@@ -187,6 +188,21 @@ async function boot() {
     onPhotoExit: () => exitPhoto(),
     onPhotoSave: () => { photo.capture = true; },
     onPhotoChange: (p) => Object.assign(photo, p),
+    onReportIssue: () => diag.open(),
+  });
+
+  /* --- Diagnostics -------------------------------------------------------
+     Registered as soon as there is a game to describe. Everything it needs is
+     handed in rather than imported, so it can never become a load-order
+     dependency of the thing it is supposed to be reporting on. */
+  const diag = installDiagnostics({
+    probe: () => window.__aerodrift.probe(),
+    sceneCore,
+    save,
+    api,
+    audio,
+    /** Prove storage is writable *now*, not just readable at boot. */
+    writeProbe: () => economy.writeSave(save),
   });
 
   ui.setTouch(touch);
@@ -900,9 +916,12 @@ async function boot() {
     requestAnimationFrame(frame);
 
     timer.update();
+    const raw = timer.getDelta();
     // Clamp: a long stall (tab switch, GC, breakpoint) must not teleport the
-    // wisp through half the world in one step.
-    const dt = Math.min(timer.getDelta(), 0.05);
+    // wisp through half the world in one step. The *unclamped* delta is what
+    // the diagnostics want, though — the hitches are the symptom.
+    const dt = Math.min(raw, 0.05);
+    diag.noteFrame(raw);
 
     simulate(dt);
     sceneCore.update(dt, clock);

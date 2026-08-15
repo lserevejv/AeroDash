@@ -7,6 +7,345 @@
 <meta name="description" content="AERODRIFT — an endless glide-and-collect game in the Frutiger Aero aesthetic." />
 <title>AERODRIFT</title>
 
+<!--
+  The document itself must never be cached. Everything else here is versioned
+  or revalidated, but a stale index.html is uniquely bad: it pins the loader,
+  the import map and the screen markup to an old build, so a fix that shipped
+  hours ago simply never arrives and the bug "still happens". These meta tags
+  are weaker than real response headers (see README, "If something looks
+  broken") but they are the only lever a static file server always honours.
+-->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+
+<!--
+  ===========================================================================
+  DIAGNOSTIC CORE
+  ===========================================================================
+  This runs before the stylesheet, before the loader, before any module — and
+  that ordering is the whole point. The failures hardest to report remotely are
+  the ones that happen before the game exists: a blocked CDN, a syntax error in
+  a module, a browser missing a feature. Nothing inside js/ can observe those,
+  because js/ never runs.
+
+  So the always-on part lives here, in the one script guaranteed to execute:
+  a console ring buffer, global error capture, a boot-stage timeline, and a
+  report the player can copy from a panel. js/diagnostics.js later registers a
+  richer provider for game state, but the system works without it.
+
+  Deliberately ES5-flavoured and dependency-free: if the browser is old enough
+  or broken enough that modern syntax fails, this still has to run.
+  ========================================================================== -->
+<script>
+(function () {
+  var MAX_LOGS = 60;      // kept in memory
+  var REPORT_LOGS = 20;   // shown in the report
+
+  var D = {
+    t0: Date.now(),
+    startedAt: new Date().toISOString(),
+    stage: 'html',
+    mirror: null,
+    mirrorAttempts: [],
+    logs: [],
+    errors: [],
+    marks: [],
+    storage: 'unknown',
+    /** Set by js/diagnostics.js once the module graph is alive. */
+    provider: null,
+    opened: false,
+  };
+  window.__AERO_DIAG = D;
+
+  function now() { return Date.now() - D.t0; }
+
+  /** Record a boot milestone, so a stalled boot shows where it stalled. */
+  D.mark = function (stage, detail) {
+    D.stage = stage;
+    D.marks.push({ t: now(), stage: stage, detail: detail || '' });
+  };
+
+  /* --- Console ring buffer ---------------------------------------------
+     Wrapping console is the only way to get the last few lines out of a
+     player who does not have devtools open — which is every player. The
+     original method is always called, so behaviour is unchanged. */
+  ['log', 'info', 'warn', 'error', 'debug'].forEach(function (level) {
+    var original = console[level];
+    if (typeof original !== 'function') return;
+    console[level] = function () {
+      try {
+        var parts = [];
+        for (var i = 0; i < arguments.length; i++) {
+          var a = arguments[i];
+          if (a instanceof Error) parts.push(a.message);
+          else if (typeof a === 'object' && a !== null) {
+            try { parts.push(JSON.stringify(a).slice(0, 300)); }
+            catch (e) { parts.push('[object]'); }
+          } else parts.push(String(a));
+        }
+        D.logs.push({ t: now(), level: level, text: parts.join(' ').slice(0, 400) });
+        if (D.logs.length > MAX_LOGS) D.logs.shift();
+      } catch (e) { /* logging must never be the thing that breaks */ }
+      return original.apply(console, arguments);
+    };
+  });
+
+  /* --- Storage reachability -------------------------------------------
+     Probed once, here, because a private-mode browser can throw on the very
+     first touch and the game needs to know that happened even if it recovers. */
+  try {
+    var probeKey = '__aero_probe__';
+    localStorage.setItem(probeKey, '1');
+    localStorage.removeItem(probeKey);
+    D.storage = 'ok';
+  } catch (e) {
+    D.storage = 'blocked: ' + (e && e.name ? e.name : 'unknown');
+  }
+
+  /* --- Global error capture -------------------------------------------- */
+  function record(kind, message, extra) {
+    try {
+      D.errors.push({
+        t: now(), kind: kind, stage: D.stage,
+        message: String(message).slice(0, 500),
+        extra: extra ? String(extra).slice(0, 900) : '',
+      });
+      if (D.errors.length > 12) D.errors.shift();
+      D.open(true);
+    } catch (e) { /* never throw from the error handler */ }
+  }
+
+  window.addEventListener('error', function (e) {
+    // Resource load failures (script/img/link) have no `error` object; the
+    // target tells us what failed to load, which is exactly what we need for
+    // "the CDN is blocked" cases.
+    if (e && e.target && e.target !== window && e.target.tagName) {
+      record('resource', e.target.tagName + ' failed to load', e.target.src || e.target.href || '');
+      return;
+    }
+    record('error', (e && e.message) || 'unknown error', e && e.error && e.error.stack);
+  }, true);
+
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    record('unhandledrejection', (r && r.message) || String(r), r && r.stack);
+  });
+
+  /* --- Report ----------------------------------------------------------- */
+  function line(k, v) { return k + ': ' + v; }
+
+  function baseSections() {
+    var nav = window.navigator || {};
+    var out = [];
+
+    out.push('AERODRIFT diagnostic report');
+    out.push('generated: ' + new Date().toISOString());
+    out.push('page opened: ' + D.startedAt + '  (+' + now() + 'ms)');
+    out.push('');
+
+    out.push('[build]');
+    out.push(line('build', (window.__AERO_BUILD_ID) || 'unknown (modules never loaded)'));
+    out.push(line('page url', location.href));
+    out.push(line('index.html last modified', document.lastModified));
+    out.push('');
+
+    out.push('[boot]');
+    out.push(line('stage reached', D.stage));
+    out.push(line('mirror used', D.mirror || 'none'));
+    if (D.mirrorAttempts.length) out.push(line('mirror attempts', D.mirrorAttempts.join(' | ')));
+    D.marks.forEach(function (m) {
+      out.push('  +' + m.t + 'ms  ' + m.stage + (m.detail ? '  (' + m.detail + ')' : ''));
+    });
+    out.push('');
+
+    out.push('[environment]');
+    out.push(line('userAgent', nav.userAgent || '?'));
+    out.push(line('platform', (nav.userAgentData && nav.userAgentData.platform) || nav.platform || '?'));
+    out.push(line('language', nav.language || '?'));
+    out.push(line('viewport', window.innerWidth + 'x' + window.innerHeight + ' @dpr' + (window.devicePixelRatio || 1)));
+    out.push(line('touch', ('ontouchstart' in window) || nav.maxTouchPoints > 0));
+    out.push(line('cores', nav.hardwareConcurrency || '?'));
+    out.push(line('memory(GB)', nav.deviceMemory || '?'));
+    out.push(line('online', nav.onLine));
+    out.push(line('localStorage', D.storage));
+    out.push(line('webgl', webglInfo()));
+    out.push('');
+
+    out.push('[cache]');
+    cacheInfo().forEach(function (l) { out.push('  ' + l); });
+    out.push('');
+
+    if (D.errors.length) {
+      out.push('[errors] (' + D.errors.length + ')');
+      D.errors.forEach(function (e) {
+        out.push('  +' + e.t + 'ms [' + e.kind + ' @' + e.stage + '] ' + e.message);
+        if (e.extra) {
+          e.extra.split('\n').slice(0, 6).forEach(function (s) { out.push('      ' + s.trim()); });
+        }
+      });
+      out.push('');
+    }
+
+    return out;
+  }
+
+  function webglInfo() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl2') || c.getContext('webgl');
+      if (!gl) return 'UNAVAILABLE (no WebGL context)';
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      var vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      var ver = (c.getContext('webgl2') ? 'webgl2' : 'webgl1');
+      return ver + ' | ' + vendor + ' | ' + renderer;
+    } catch (e) {
+      return 'error probing: ' + e.message;
+    }
+  }
+
+  /**
+   * Whether the browser served our own files from cache. This is the single
+   * most useful line in the report when a fixed bug appears to persist.
+   */
+  function cacheInfo() {
+    var out = [];
+    try {
+      if (!performance || !performance.getEntriesByType) return ['unavailable'];
+      var entries = performance.getEntriesByType('resource');
+      var interesting = entries.filter(function (e) {
+        return /\/(index\.html|main\.js|style\.css)/.test(e.name) || /three/.test(e.name);
+      });
+      if (!interesting.length) out.push('no matching resource timings');
+      interesting.slice(0, 8).forEach(function (e) {
+        var cached = e.transferSize === 0 && e.decodedBodySize > 0;
+        out.push((cached ? 'FROM CACHE ' : 'network    ') + shortUrl(e.name) +
+                 '  (' + Math.round(e.duration) + 'ms, ' + e.decodedBodySize + 'B)');
+      });
+      if (window.navigator.serviceWorker) {
+        out.push('serviceWorker controller: ' +
+          (navigator.serviceWorker.controller ? 'PRESENT — may be serving an old build' : 'none'));
+      }
+    } catch (e) {
+      out.push('error: ' + e.message);
+    }
+    return out;
+  }
+
+  function shortUrl(u) {
+    try { var p = new URL(u); return p.host + p.pathname; } catch (e) { return String(u); }
+  }
+
+  D.buildReport = function () {
+    var parts = baseSections();
+    // The module layer contributes game state when it is alive. It must never
+    // be able to stop the base report from being produced.
+    if (typeof D.provider === 'function') {
+      try {
+        var extra = D.provider();
+        if (extra) parts = parts.concat(String(extra).split('\n'));
+      } catch (e) {
+        parts.push('[game state] provider threw: ' + e.message);
+      }
+    } else {
+      parts.push('[game state]');
+      parts.push('  unavailable — the game module never finished loading');
+    }
+
+    parts.push('');
+    parts.push('[console] last ' + REPORT_LOGS + ' lines');
+    var tail = D.logs.slice(-REPORT_LOGS);
+    if (!tail.length) parts.push('  (nothing logged)');
+    tail.forEach(function (l) {
+      parts.push('  +' + l.t + 'ms ' + l.level.toUpperCase() + ' ' + l.text);
+    });
+
+    return parts.join('\n');
+  };
+
+  /* --- Panel ------------------------------------------------------------ */
+  D.open = function (isCrash) {
+    try {
+      var panel = document.getElementById('screen-diag');
+      if (!panel) return;                 // markup not parsed yet
+      if (D.opened && isCrash) return;    // one crash panel is enough
+      D.opened = true;
+
+      var title = document.getElementById('diag-title');
+      var lead = document.getElementById('diag-lead');
+      if (title) title.textContent = isCrash ? 'Something went wrong' : 'Report an issue';
+      if (lead) {
+        lead.textContent = isCrash
+          ? 'The game hit an error. Copy the report below and send it over — it says exactly what broke, and no personal data is in it.'
+          : 'Copy the report below and send it over. It describes your browser, this build and what the game was doing — nothing personal.';
+      }
+
+      var pre = document.getElementById('diag-report');
+      if (pre) pre.textContent = D.buildReport();
+
+      var say = document.getElementById('diag-copied');
+      if (say) say.textContent = '';
+
+      document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
+      panel.classList.add('is-active');
+      document.body.classList.remove('is-photo');
+    } catch (e) { /* the diagnostics panel must never itself crash */ }
+  };
+
+  /** Copy with a fallback: the async clipboard API needs a secure context,
+      and a LAN address served over plain http is not one. */
+  D.copy = function () {
+    var pre = document.getElementById('diag-report');
+    var say = document.getElementById('diag-copied');
+    var text = pre ? pre.textContent : D.buildReport();
+    var done = function (ok) {
+      if (say) say.textContent = ok ? 'Copied to clipboard.' : 'Copy failed — select the text above and copy manually.';
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallbackCopy(pre)); });
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    done(fallbackCopy(pre));
+  };
+
+  function fallbackCopy(pre) {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(pre);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      var ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest && e.target.closest('[data-diag]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-diag');
+    if (act === 'copy') D.copy();
+    else if (act === 'reload') location.reload();
+    else if (act === 'close') {
+      var panel = document.getElementById('screen-diag');
+      if (panel) panel.classList.remove('is-active');
+      D.opened = false;
+      // Hand control back to the game if it is alive; otherwise show the hub.
+      if (window.__aerodrift && window.__aerodrift.ui) {
+        window.__aerodrift.ui.show(window.__aerodrift.probe().state === 'playing' ? 'pause' : 'hub');
+        if (window.__aerodrift.probe().state === 'playing') window.__aerodrift.pauseRun();
+      }
+    }
+  });
+
+  D.mark('html');
+})();
+</script>
+
 <!-- Rounded, friendly sans. If the CDN is unreachable the system rounded stack in style.css takes over. -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -390,6 +729,16 @@
 
     <p class="muted small" id="quality-note">Auto steps quality down if the framerate dips.</p>
 
+    <!-- Always reachable, not only after a crash: most "something is wrong"
+         moments — a blank hub, a dead button, a visual glitch — never throw. -->
+    <div class="btn-row">
+      <button class="gel gel--sm" data-action="report-issue">Report an issue</button>
+    </div>
+    <p class="muted small">
+      Opens a copyable report describing this build, your browser and what the
+      game was doing. No personal data.
+    </p>
+
     <div class="btn-row">
       <button class="gel gel--primary" data-action="close-modal">Back</button>
       <button class="gel gel--danger gel--sm" data-action="reset-progress" id="btn-reset">Reset progress</button>
@@ -422,6 +771,23 @@
     <button class="gel gel--sm" data-action="photo-exit">Done</button>
   </div>
 </div>
+
+<!-- ============================ DIAGNOSTICS ================================
+     Shown automatically on any uncaught error, and on demand from Settings.
+     Deliberately plain: it has to render even when the 3D scene is dead. -->
+<section id="screen-diag" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title" id="diag-title">Something went wrong</h2>
+    <p class="muted small" id="diag-lead"></p>
+    <pre class="diag-report" id="diag-report" tabindex="0"></pre>
+    <div class="btn-row">
+      <button class="gel gel--primary" data-diag="copy">Copy diagnostic report</button>
+      <button class="gel gel--sm" data-diag="reload">Reload</button>
+      <button class="gel gel--sm" data-diag="close">Close</button>
+    </div>
+    <p class="muted small" id="diag-copied"></p>
+  </div>
+</section>
 
 <!--
   Loader.
@@ -457,10 +823,12 @@
   ];
   var PROBE_TIMEOUT_MS = 4500;
 
+  var D = window.__AERO_DIAG || { mark: function () {}, mirrorAttempts: [] };
   var note = document.getElementById('boot-note');
   function say(text) { if (note) note.textContent = text; }
 
   function showOffline() {
+    D.mark('offline-panel');
     document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
     var el = document.getElementById('screen-offline');
     if (el) el.classList.add('is-active');
@@ -479,6 +847,8 @@
   }
 
   function start(base) {
+    D.mirror = base;
+    D.mark('module-loading', base);
     var map = document.createElement('script');
     map.type = 'importmap';
     map.textContent = JSON.stringify({
@@ -503,7 +873,10 @@
   function attempt(i) {
     if (i >= MIRRORS.length) { showOffline(); return; }
     say(i === 0 ? 'Loading Three.js from CDN' : 'Trying a mirror…');
+    D.mark('probing', MIRRORS[i]);
+    var t0 = Date.now();
     probe(MIRRORS[i]).then(function (ok) {
+      D.mirrorAttempts.push(MIRRORS[i] + ' -> ' + (ok ? 'ok' : 'FAILED') + ' (' + (Date.now() - t0) + 'ms)');
       if (ok) start(MIRRORS[i]);
       else attempt(i + 1);
     });

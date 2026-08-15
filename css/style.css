@@ -1170,8 +1170,48 @@ body.is-touch .icon-btn { display: block; }
 .photo-field i { font-style: normal; color: var(--ink-soft); }
 .photo-field input[type="range"] { height: 10px; }
 
-/* In photo mode everything else gets out of the way. */
-body.is-photo #hud, body.is-photo .screen { display: none !important; }
+/* In photo mode everything else gets out of the way — except the diagnostics
+   panel, which must be able to appear over any state including this one. */
+body.is-photo #hud, body.is-photo .screen:not(#screen-diag) { display: none !important; }
+
+/* ==========================================================================
+   Diagnostics panel
+   ==========================================================================
+   Rendered by the always-on core in index.html, which may be running with no
+   modules loaded and no WebGL context — so this styling has to stand on its
+   own and must not depend on anything the game sets up.
+   ========================================================================== */
+
+/* Above every other screen: it reports on them, so it sits over them. */
+#screen-diag { z-index: 40; }
+#screen-diag.is-active { display: flex; }
+
+.diag-report {
+  position: relative;
+  margin: 4px 0 14px;
+  padding: 14px 16px;
+  max-height: min(46vh, 420px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 2px 6px var(--shadow-1);
+  /* Selectable even though the rest of the game disables selection, because
+     manual copy is the fallback when the clipboard API is unavailable. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+.diag-report:focus-visible { outline: 3px solid rgba(255, 233, 133, 0.95); outline-offset: 2px; }
+
+#diag-copied { min-height: 18px; margin: 0; font-weight: 600; color: var(--teal-deep); }
 
 /* ==========================================================================
    Responsive

@@ -160,23 +160,65 @@ export const DEFAULT_SAVE = {
 const cloneDefaults = () => JSON.parse(JSON.stringify(DEFAULT_SAVE));
 
 /**
+ * What the last `loadSave()` actually did.
+ *
+ * Exposed for the diagnostics report. "Which save keys exist, and did anything
+ * have to be repaired on load" is the difference between a bug in the game and
+ * a bug in the player's stored data, and it is not a question you can ask a
+ * non-technical user over chat.
+ */
+export const loadMeta = {
+  source: 'none',        // 'defaults' | 'v1-migration' | 'v2'
+  storage: 'unknown',    // 'ok' | 'unreadable' | 'blocked'
+  rawBytes: 0,
+  keys: [],
+  repairs: [],
+  parseError: '',
+};
+
+/** Called by normalise() whenever it has to correct something. */
+function repaired(what) {
+  loadMeta.repairs.push(what);
+}
+
+/**
  * localStorage throws outright in some private-browsing modes and sandboxed
  * frames. Every access is guarded: losing progression is bad, but refusing to
  * start the game is worse.
  */
 export function loadSave() {
+  loadMeta.source = 'defaults';
+  loadMeta.storage = 'unknown';
+  loadMeta.rawBytes = 0;
+  loadMeta.keys = [];
+  loadMeta.repairs = [];
+  loadMeta.parseError = '';
+
   let parsed = null;
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    if (raw) parsed = JSON.parse(raw);
+    loadMeta.storage = 'ok';
+    if (raw) {
+      loadMeta.rawBytes = raw.length;
+      try {
+        parsed = JSON.parse(raw);
+        loadMeta.source = 'v2';
+      } catch (err) {
+        loadMeta.parseError = String(err.message).slice(0, 120);
+        console.warn('[aerodrift] v2 save did not parse, falling back', err);
+      }
+    }
   } catch (err) {
-    console.warn('[aerodrift] save unreadable, using defaults', err);
+    loadMeta.storage = 'blocked';
+    console.warn('[aerodrift] localStorage unreachable, using defaults', err);
   }
 
   if (!parsed) {
     const migrated = migrateV1();
-    if (migrated) parsed = migrated;
+    if (migrated) { parsed = migrated; loadMeta.source = 'v1-migration'; }
   }
+
+  loadMeta.keys = parsed ? Object.keys(parsed) : [];
 
   const save = merge(cloneDefaults(), parsed || {});
   if (!save.playerId) save.playerId = makePlayerId();
@@ -280,34 +322,36 @@ function normalise(save) {
   /* --- Nested objects the game indexes into without checking ----------- */
   // Cheap insurance: every one of these is read as `save.x.y` somewhere on the
   // run-settling path, where a throw costs the player the run they just flew.
-  if (!isPlainObject(save.stats)) save.stats = { ...DEFAULT_SAVE.stats };
+  if (!isPlainObject(save.stats)) { save.stats = { ...DEFAULT_SAVE.stats }; repaired('stats replaced'); }
   else for (const [k, v] of Object.entries(DEFAULT_SAVE.stats)) {
-    if (!Number.isFinite(save.stats[k])) save.stats[k] = v;
+    if (!Number.isFinite(save.stats[k])) { save.stats[k] = v; repaired(`stats.${k}`); }
   }
-  if (!isPlainObject(save.daily)) save.daily = { ...DEFAULT_SAVE.daily };
-  if (!isPlainObject(save.equipped)) save.equipped = { ...DEFAULT_SAVE.equipped };
-  if (!isPlainObject(save.settings)) save.settings = { ...DEFAULT_SAVE.settings };
-  if (!Array.isArray(save.achievements)) save.achievements = [];
-  if (!Array.isArray(save.realmsUnlocked)) save.realmsUnlocked = [];
+  if (!isPlainObject(save.daily)) { save.daily = { ...DEFAULT_SAVE.daily }; repaired('daily replaced'); }
+  if (!isPlainObject(save.equipped)) { save.equipped = { ...DEFAULT_SAVE.equipped }; repaired('equipped replaced'); }
+  if (!isPlainObject(save.settings)) { save.settings = { ...DEFAULT_SAVE.settings }; repaired('settings replaced'); }
+  if (!Array.isArray(save.achievements)) { save.achievements = []; repaired('achievements'); }
+  if (!Array.isArray(save.realmsUnlocked)) { save.realmsUnlocked = []; repaired('realmsUnlocked'); }
 
   /* --- Cosmetics --------------------------------------------------------- */
   if (!Array.isArray(save.ownedCosmetics) || !save.ownedCosmetics.length) {
     save.ownedCosmetics = ['trail_chrome', 'skin_dew', 'aura_none'];
+    repaired('ownedCosmetics reset');
   }
   for (const must of ['trail_chrome', 'skin_dew', 'aura_none']) {
-    if (!save.ownedCosmetics.includes(must)) save.ownedCosmetics.push(must);
+    if (!save.ownedCosmetics.includes(must)) { save.ownedCosmetics.push(must); repaired(`ownedCosmetics += ${must}`); }
   }
 
   /* --- Content ----------------------------------------------------------- */
   if (!Array.isArray(save.worldsUnlocked) || !save.worldsUnlocked.length) {
     save.worldsUnlocked = ['skyshore'];
+    repaired('worldsUnlocked reset');
   }
 
   /* --- Upgrades ---------------------------------------------------------- */
-  if (!isPlainObject(save.upgrades)) save.upgrades = {};
+  if (!isPlainObject(save.upgrades)) { save.upgrades = {}; repaired('upgrades replaced'); }
   for (const k of Object.keys(save.upgrades)) {
     const n = Math.floor(Number(save.upgrades[k]));
-    if (!Number.isFinite(n) || n <= 0) delete save.upgrades[k];
+    if (!Number.isFinite(n) || n <= 0) { delete save.upgrades[k]; repaired(`upgrades.${k} dropped`); }
     else save.upgrades[k] = n;
   }
 
@@ -317,7 +361,7 @@ function normalise(save) {
     'lifetimeDistance', 'lifetimeDroplets', 'cycleDistance', 'cycleDroplets',
     'bestScore', 'bestCombo', 'bestDistance', 'runs',
   ]) {
-    if (!Number.isFinite(save[k]) || save[k] < 0) save[k] = DEFAULT_SAVE[k] ?? 0;
+    if (!Number.isFinite(save[k]) || save[k] < 0) { save[k] = DEFAULT_SAVE[k] ?? 0; repaired(k); }
   }
 }
 

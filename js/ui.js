@@ -32,6 +32,7 @@ export function createUI(opts) {
     onPlay, onDaily, onResume, onEndRun, onHome,
     onSettingsChange, onEquip, onRebirth, onResetProgress,
     onPhotoEnter, onPhotoExit, onPhotoSave, onPhotoChange,
+    onReportIssue,
   } = opts;
 
   const $ = (id) => document.getElementById(id);
@@ -496,6 +497,7 @@ export function createUI(opts) {
       case 'refresh-board': api.refresh().then(() => boardUI.refresh()); break;
       case 'do-rebirth': onRebirth?.(); break;
       case 'reset-progress': confirmReset(btn); break;
+      case 'report-issue': onReportIssue?.(); break;
       case 'photo': onPhotoEnter?.(); break;
       case 'photo-exit': onPhotoExit?.(); break;
       case 'photo-save': onPhotoSave?.(); break;
