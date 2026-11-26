@@ -1,0 +1,12 @@
+#showcase-controls{display:none}
+body.is-showcase #showcase-controls{position:fixed;z-index:60;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;gap:6px;background:rgba(245,255,255,.94);padding:6px;border:1px solid #fff;border-radius:30px;box-shadow:0 4px 25px #064e6830;max-width:calc(100vw - 24px);white-space:nowrap}
+#showcase-controls a,#showcase-controls button{font:600 12px system-ui;color:#123f54;border:0;background:transparent;text-decoration:none;border-radius:20px;padding:9px 12px;cursor:pointer}
+#showcase-controls a:hover,#showcase-controls button:hover{background:#d6f3f3}
+#showcase-controls [hidden]{display:none}
+#showcase-hint{position:fixed;z-index:59;bottom:80px;left:50%;transform:translateX(-50%);background:#093d51e8;color:#fff;border-radius:20px;padding:10px 18px;font:13px system-ui;text-align:center;width:max-content;max-width:85vw;pointer-events:none}
+.is-showcase #screen-hub{padding-top:70px}
+.is-showcase #screen-hub [data-action="daily"],.is-showcase #screen-hub [data-action="season"],.is-showcase #screen-hub [data-action="store"],.is-showcase #screen-hub [data-action="more"],.is-showcase #screen-hub [data-action="streak"],.is-showcase #title-quests{display:none}
+.is-showcase .tagline{font:500 13px system-ui;letter-spacing:.08em}
+.is-showcase .panel--worlds{margin-top:15px}
+.is-showcase #hud-ghost{display:none!important}
+@media(max-width:680px){body.is-showcase #showcase-controls{top:auto;bottom:max(12px,env(safe-area-inset-bottom));gap:0}#showcase-controls a,#showcase-controls button{padding:9px 8px;font-size:11px}.is-showcase #screen-hub{padding-top:20px;padding-bottom:80px}.is-showcase #hud .hud-bottom{bottom:65px}}

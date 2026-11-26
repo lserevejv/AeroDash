@@ -1,0 +1,2942 @@
+/* ==========================================================================
+   AERODRIFT — Frutiger Aero UI
+   Everything here is procedural CSS: gradients, gloss sweeps and blurs.
+   No image files are referenced anywhere in this stylesheet.
+   ========================================================================== */
+
+:root {
+  /* --- Core palette (see the aesthetic bible) --------------------------- */
+  --sky:          #4FC3E8;
+  --sky-pale:     #A9E4F5;
+  --aero-deep:    #1B7BA8;
+  --aqua:         #3FD1C0;
+  --teal-deep:    #17A398;
+  --green:        #8CD867;
+  --green-shade:  #4E9B3D;
+  --glass:        #F2F6F8;
+  --chrome-lt:    #D7E1E6;
+  --chrome-sh:    #A9B7BF;
+  --sun-hi:       #FFE985;
+  --sun-core:     #FFD24C;
+  --lilac:        #C9A9F0;
+
+  /* Never pure black — shadows are deep desaturated blue. */
+  --shadow-1: rgba(12, 58, 82, 0.18);
+  --shadow-2: rgba(12, 58, 82, 0.30);
+  --shadow-3: rgba(9, 44, 63, 0.45);
+  --ink:      #0E3D55;
+  --ink-soft: #2C6C8B;
+
+  /* Glass surfaces */
+  --glass-fill: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.58) 0%,
+      rgba(255, 255, 255, 0.30) 42%,
+      rgba(206, 234, 245, 0.26) 43%,
+      rgba(168, 214, 235, 0.34) 100%);
+  --glass-edge: rgba(255, 255, 255, 0.72);
+
+  --radius-lg: 26px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+
+  --font-display: "Baloo 2", "Comfortaa", "Trebuchet MS", -apple-system, "Segoe UI", sans-serif;
+  --font-ui: "Poppins", -apple-system, "Segoe UI", "Trebuchet MS", sans-serif;
+
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--sky) 0%, var(--sky-pale) 100%);
+  font-family: var(--font-ui);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+body { touch-action: none; user-select: none; -webkit-user-select: none; }
+
+/* ==========================================================================
+   Stage / canvas
+   ========================================================================== */
+
+#stage { position: fixed; inset: 0; }
+
+#gl { display: block; width: 100%; height: 100%; }
+
+/* Idle-drifting bokeh discs layered over the render. Sold entirely with
+   radial-gradients so there is no sprite file to load. */
+#bokeh {
+  position: absolute;
+  inset: -10%;
+  pointer-events: none;
+  opacity: 0.55;
+  mix-blend-mode: screen;
+  background-repeat: no-repeat;
+  /* `closest-side` is load-bearing: each gradient is painted into its own
+     background box, and a default (farthest-corner) radius overruns that box
+     and gets clipped, leaving a hard rectangular edge on screen. Sizing the
+     circle to the closest side makes it reach zero alpha exactly at the
+     boundary, so the discs stay discs. */
+  background-image:
+    radial-gradient(circle closest-side, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.22) 46%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(circle closest-side, rgba(255, 233, 133, 0.65), rgba(255, 233, 133, 0.18) 46%, rgba(255, 233, 133, 0) 100%),
+    radial-gradient(circle closest-side, rgba(201, 169, 240, 0.55), rgba(201, 169, 240, 0.14) 46%, rgba(201, 169, 240, 0) 100%),
+    radial-gradient(circle closest-side, rgba(63, 209, 192, 0.50), rgba(63, 209, 192, 0.12) 46%, rgba(63, 209, 192, 0) 100%),
+    radial-gradient(circle closest-side, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.12) 46%, rgba(255, 255, 255, 0) 100%);
+  background-position: 14% 22%, 76% 14%, 62% 78%, 30% 68%, 90% 54%;
+  background-size: 34vmin 34vmin, 26vmin 26vmin, 30vmin 30vmin, 22vmin 22vmin, 18vmin 18vmin;
+  animation: bokeh-drift 62s ease-in-out infinite alternate;
+}
+
+@keyframes bokeh-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(2.4vw, -2.2vh, 0) scale(1.06); }
+  100% { transform: translate3d(-2.0vw, 2.6vh, 0) scale(1.02); }
+}
+
+/* Boost / biome-change flash. */
+#flash {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 55%, rgba(255,255,255,0.95), rgba(255,255,255,0) 68%);
+  opacity: 0; transition: opacity 460ms ease-out;
+}
+/* `--flash-alpha` is set per-flash by ui.js from the accessibility setting, so
+   a reduced value dims every flash rather than only shortening it. 0.62 is the
+   original full-strength value and stays the ceiling. */
+#flash.is-lit {
+  opacity: calc(0.62 * var(--flash-alpha, 1));
+  transition-duration: 60ms;
+}
+
+/* Floating score popups. */
+#popups { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+
+.popup {
+  position: absolute;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(15px, 2.1vmin, 26px);
+  color: #fff;
+  text-shadow: 0 0 12px rgba(255, 233, 133, 0.95), 0 2px 5px var(--shadow-2);
+  transform: translate(-50%, -50%);
+  animation: popup-rise 900ms cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  white-space: nowrap;
+}
+.popup--ring { color: var(--sun-hi); font-size: clamp(19px, 2.8vmin, 34px); }
+
+@keyframes popup-rise {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  18%  { opacity: 1; transform: translate(-50%, -60%) scale(1.12); }
+  100% { opacity: 0; transform: translate(-50%, -170%) scale(1); }
+}
+
+/* ==========================================================================
+   Screens
+   ========================================================================== */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: calc(20px + var(--safe-t)) calc(20px + var(--safe-r)) calc(20px + var(--safe-b)) calc(20px + var(--safe-l));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  z-index: 20;
+}
+.screen.is-active { display: flex; animation: screen-in 340ms cubic-bezier(0.2, 0.9, 0.3, 1); }
+
+/* Modal screens dim what's behind them; full screens sit on the live render. */
+.screen--modal { background: rgba(24, 96, 130, 0.34); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+
+/* Deliberately transform-only, with no opacity keyframe.
+   A CSS animation that has been applied but not yet started (playState
+   "running", startTime null — which happens when the page is starved of
+   rendering opportunities) pins the element at its `from` values. If `from`
+   set opacity:0, the menu would sit there fully laid out and completely
+   invisible, with no way for the player to reach Play. Animating only the
+   transform means the worst case is a menu that appears without sliding. */
+@keyframes screen-in {
+  from { transform: translateY(14px) scale(0.985); }
+  to   { transform: none; }
+}
+
+/* ==========================================================================
+   Glass panels — the signature Aero surface
+   ========================================================================== */
+
+.panel {
+  position: relative;
+  width: min(520px, 100%);
+  padding: 30px 30px 26px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  box-shadow:
+    0 18px 46px var(--shadow-2),
+    0 2px 0 rgba(255, 255, 255, 0.85) inset,
+    0 -18px 32px rgba(120, 190, 220, 0.20) inset;
+  overflow: hidden;
+  text-align: center;
+}
+
+/* The gloss sweep across the top third that defines the look. */
+.panel::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 46%;
+  border-radius: var(--radius-lg) var(--radius-lg) 50% 50% / var(--radius-lg) var(--radius-lg) 22% 22%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.16) 100%);
+  pointer-events: none;
+}
+
+.panel--tight { width: min(360px, 100%); padding: 26px; }
+.panel--results { width: min(560px, 100%); }
+.panel--stats, .panel--trails { padding: 18px 22px; margin-top: 16px; width: min(440px, 100%); }
+
+.panel-title {
+  position: relative;
+  margin: 0 0 12px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(24px, 4vmin, 34px);
+  letter-spacing: 0.01em;
+  color: var(--aero-deep);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(27,123,168,0.22);
+}
+
+.panel-subtitle {
+  position: relative;
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.panel p { position: relative; margin: 0 0 12px; line-height: 1.55; font-size: 15px; }
+.muted { color: var(--ink-soft); }
+.small { font-size: 13px; }
+code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; background: rgba(255,255,255,0.55); padding: 1px 6px; border-radius: 6px; }
+
+/* ==========================================================================
+   Gel buttons
+   ========================================================================== */
+
+.gel {
+  position: relative;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  padding: 12px 26px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--aero-deep);
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(180deg, #FFFFFF 0%, #E8F4FA 48%, #C4E3F2 51%, #DCF0F9 100%);
+  box-shadow:
+    0 6px 16px var(--shadow-1),
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 -8px 14px rgba(120, 190, 220, 0.28) inset;
+  transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow 200ms ease, filter 200ms ease;
+}
+
+/* Bright glossy highlight arc across the top half. */
+.gel::before {
+  content: "";
+  position: absolute;
+  left: 6%; right: 6%; top: 3px;
+  height: 44%;
+  border-radius: 999px 999px 60% 60% / 999px 999px 100% 100%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.35) 100%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.gel:hover { transform: translateY(-2px); box-shadow: 0 12px 26px var(--shadow-2), 0 0 22px rgba(120, 210, 240, 0.75), 0 1px 0 rgba(255,255,255,0.95) inset, 0 -8px 14px rgba(120, 190, 220, 0.28) inset; }
+.gel:active { transform: translateY(1px) scale(0.985); filter: saturate(1.15) brightness(0.98); }
+.gel:focus-visible { outline: 3px solid rgba(255, 233, 133, 0.95); outline-offset: 3px; }
+
+.gel--primary {
+  color: #0B4763;
+  background: linear-gradient(180deg, #FFFFFF 0%, #BFEEFF 46%, #6FD3F0 50%, #A6E7FA 100%);
+  border-color: rgba(255,255,255,0.95);
+}
+.gel--big { padding: 16px 46px; font-size: 21px; letter-spacing: 0.02em; }
+
+.btn-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; position: relative; margin-top: 8px; }
+.btn-row--stack { flex-direction: column; align-items: center; gap: 14px; }
+
+/* ==========================================================================
+   Title screen
+   ========================================================================== */
+
+#screen-title { align-items: center; }
+.title-wrap { position: relative; display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 560px; }
+
+.logo { margin: 0 0 2px; line-height: 1; }
+
+/* "Wet glass" title: a solid glossy gradient fill plus a sweeping specular
+   highlight rendered by a duplicated ::after layer riding a clip animation. */
+.logo-text {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(46px, 12vmin, 104px);
+  letter-spacing: 0.06em;
+  background: linear-gradient(180deg, #FFFFFF 0%, #E6F7FF 40%, #7FD8F2 52%, #2E9AC8 78%, #1B7BA8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 3px 0 rgba(255,255,255,0.55)) drop-shadow(0 10px 24px rgba(27, 123, 168, 0.45));
+}
+
+.logo-text::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, rgba(255,255,255,0) 38%, rgba(255,255,255,0.95) 50%, rgba(255,255,255,0) 62%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  background-size: 280% 100%;
+  animation: gloss-sweep 5.2s ease-in-out infinite;
+}
+
+@keyframes gloss-sweep {
+  0%, 62% { background-position: 180% 0; }
+  100%    { background-position: -80% 0; }
+}
+
+.tagline {
+  margin: 2px 0 22px;
+  font-size: clamp(14px, 2.2vmin, 18px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #0B4763;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.8);
+}
+
+/* ==========================================================================
+   Stats / trail picker
+   ========================================================================== */
+
+.stat { position: relative; display: flex; flex-direction: column; gap: 2px; }
+.stat-label { font-size: 12px; letter-spacing: 0.10em; text-transform: uppercase; color: var(--ink-soft); }
+.stat-value { font-family: var(--font-display); font-weight: 800; font-size: 22px; color: var(--aero-deep); }
+.stat--big .stat-value { font-size: clamp(34px, 6vmin, 50px); }
+
+.panel--stats { display: flex; justify-content: space-around; gap: 16px; }
+
+.result-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 10px;
+  margin: 14px 0 16px;
+}
+.result-grid .stat--big { grid-column: 1 / -1; }
+
+.result-badge {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 6px 20px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #6A4B00;
+  background: linear-gradient(180deg, #FFF6CF 0%, #FFE985 48%, #FFD24C 52%, #FFE07A 100%);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 6px 18px rgba(255, 196, 60, 0.5), 0 1px 0 rgba(255,255,255,0.9) inset;
+  animation: badge-pop 620ms cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+@keyframes badge-pop { 0% { transform: scale(0.4); } 100% { transform: none; } }
+
+.trail-row { position: relative; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+.trail-dot {
+  position: relative;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.9);
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 5px 14px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  transition: transform 160ms cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow 200ms ease;
+}
+/* Droplet-style specular dot, top-left. */
+.trail-dot::after {
+  content: "";
+  position: absolute;
+  left: 22%; top: 14%;
+  width: 34%; height: 26%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.25));
+}
+.trail-dot:hover { transform: translateY(-3px) scale(1.06); }
+.trail-dot.is-selected { box-shadow: 0 0 0 3px rgba(255,255,255,0.95), 0 6px 20px var(--shadow-2), 0 0 26px rgba(255, 233, 133, 0.9); transform: scale(1.08); }
+.trail-dot.is-locked { filter: grayscale(0.75) brightness(1.05); cursor: not-allowed; opacity: 0.62; }
+.trail-dot.is-locked::before {
+  content: "🔒";
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 17px;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+}
+
+/* A long-overdue milestone haul can earn a dozen of these at once, so the list
+   scrolls inside the panel rather than growing it past the viewport. */
+.unlock-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.unlock-toast {
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(190, 235, 250, 0.6));
+  border: 1px solid rgba(255,255,255,0.9);
+  font-weight: 600; font-size: 14px; color: var(--aero-deep);
+  animation: badge-pop 520ms cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+.how-list { position: relative; margin: 0 0 14px; padding-left: 20px; text-align: left; line-height: 1.75; font-size: 15px; }
+.how-list li { margin-bottom: 4px; }
+
+kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 12px; font-weight: 600;
+  color: var(--aero-deep);
+  background: linear-gradient(180deg, #FFFFFF, #D7E1E6);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 2px 4px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+
+/* ==========================================================================
+   Settings fields
+   ========================================================================== */
+
+.field { position: relative; display: block; text-align: left; margin-bottom: 18px; }
+.field--row { display: flex; align-items: center; justify-content: space-between; }
+.field-label { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; color: var(--ink); margin-bottom: 8px; }
+.field-val { font-style: normal; color: var(--ink-soft); }
+
+/* Glass-tube range slider. */
+input[type="range"] {
+  appearance: none; -webkit-appearance: none;
+  width: 100%; height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(140,190,215,0.55), rgba(255,255,255,0.55));
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: inset 0 2px 5px var(--shadow-1);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(180deg, #FFFFFF 0%, #CFEEFB 48%, #6FD3F0 52%, #A6E7FA 100%);
+  border: 1px solid rgba(255,255,255,0.95);
+  box-shadow: 0 3px 8px var(--shadow-2), 0 1px 0 rgba(255,255,255,0.9) inset;
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.95);
+  background: linear-gradient(180deg, #FFFFFF 0%, #6FD3F0 100%);
+  box-shadow: 0 3px 8px var(--shadow-2);
+  cursor: pointer;
+}
+
+.switch {
+  appearance: none; -webkit-appearance: none;
+  width: 56px; height: 30px; border-radius: 999px; cursor: pointer; position: relative;
+  background: linear-gradient(180deg, rgba(150,185,205,0.7), rgba(220,240,250,0.7));
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: inset 0 2px 6px var(--shadow-1);
+  transition: background 220ms ease;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(180deg, #FFFFFF, #D7E1E6);
+  box-shadow: 0 2px 6px var(--shadow-2);
+  transition: transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.switch:checked { background: linear-gradient(180deg, #7FE0D2, #17A398); }
+.switch:checked::after { transform: translateX(26px); }
+
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg-btn {
+  flex: 1 1 auto;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui); font-weight: 600; font-size: 13px;
+  color: var(--ink-soft); cursor: pointer;
+  background: linear-gradient(180deg, rgba(255,255,255,0.75), rgba(210,235,246,0.5));
+  border: 1px solid rgba(255,255,255,0.85);
+  transition: all 180ms ease;
+}
+.seg-btn.is-on {
+  color: #0B4763;
+  background: linear-gradient(180deg, #FFFFFF 0%, #BFEEFF 48%, #6FD3F0 52%, #A6E7FA 100%);
+  box-shadow: 0 4px 12px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+
+/* ==========================================================================
+   HUD
+   ========================================================================== */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: none;
+  pointer-events: none;
+  padding: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
+}
+#hud.is-active { display: block; }
+
+.hud-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.hud-bottom { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(20px + var(--safe-b)); }
+
+/* Small frosted chips — same glass recipe as the panels, scaled down. */
+.glass-chip {
+  position: relative;
+  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: 0 8px 22px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  overflow: hidden;
+  min-width: 132px;
+}
+.glass-chip::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 48%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.08));
+  border-radius: var(--radius-md) var(--radius-md) 40% 40% / var(--radius-md) var(--radius-md) 20% 20%;
+  pointer-events: none;
+}
+
+.hud-label { position: relative; display: block; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.hud-value { position: relative; display: block; font-family: var(--font-display); font-weight: 800; font-size: 26px; line-height: 1.16; color: var(--aero-deep); }
+.hud-dist { text-align: right; }
+
+.hud-combo {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-display); font-weight: 800; font-size: 15px;
+  color: var(--teal-deep);
+  transition: transform 120ms ease, color 200ms ease;
+}
+.hud-combo.is-hot { color: #C98A00; }
+.hud-combo.is-pulse { transform: scale(1.42); }
+
+/* Glass tubes for progress + boost. */
+.progress-tube, .gauge-tube {
+  position: relative;
+  margin-top: 6px;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(120,170,195,0.5), rgba(255,255,255,0.45));
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow: inset 0 1px 4px var(--shadow-1);
+}
+.progress-tube i, .gauge-tube i {
+  display: block; height: 100%; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #FFFFFF 0%, #7FE0D2 45%, #17A398 100%);
+  box-shadow: 0 0 10px rgba(63, 209, 192, 0.9);
+  transition: width 180ms ease-out;
+}
+
+.boost-gauge {
+  position: relative;
+  width: min(320px, 62vw);
+  padding: 9px 16px 11px;
+  border-radius: var(--radius-md);
+  text-align: center;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: 0 8px 22px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.gauge-tube { height: 15px; }
+.gauge-tube i {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFE985 42%, #FFD24C 46%, #FFC53C 100%);
+  box-shadow: 0 0 14px rgba(255, 210, 76, 0.95);
+  transition: width 90ms linear;
+}
+.boost-gauge.is-ready .gauge-tube i { animation: gauge-throb 1.15s ease-in-out infinite; }
+.boost-gauge.is-firing .gauge-tube i { background: linear-gradient(180deg, #FFFFFF, #7FE0D2 45%, #3FD1C0 100%); box-shadow: 0 0 20px rgba(127, 224, 210, 1); }
+@keyframes gauge-throb { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.4); } }
+
+/* Biome name announcement. */
+.hud-biome {
+  position: absolute;
+  left: 50%; top: 16%;
+  transform: translateX(-50%);
+  font-family: var(--font-display); font-weight: 800;
+  font-size: clamp(20px, 3.6vmin, 34px);
+  letter-spacing: 0.24em; text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 20px rgba(255,255,255,0.9), 0 3px 12px var(--shadow-3);
+  opacity: 0;
+  white-space: nowrap;
+}
+.hud-biome.is-shown { animation: biome-flash 3.2s ease-in-out; }
+@keyframes biome-flash {
+  0%   { opacity: 0; letter-spacing: 0.5em; }
+  18%  { opacity: 1; letter-spacing: 0.24em; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; letter-spacing: 0.3em; }
+}
+
+/* Touch controls — hidden until a touch device is detected. */
+.boost-pad {
+  position: absolute;
+  right: calc(22px + var(--safe-r));
+  bottom: calc(86px + var(--safe-b));
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  display: none;
+  pointer-events: auto;
+  font-family: var(--font-display); font-weight: 800; font-size: 14px; letter-spacing: 0.08em;
+  color: #6A4B00;
+  border: 1px solid rgba(255,255,255,0.95);
+  background: linear-gradient(180deg, #FFF6CF 0%, #FFE985 46%, #FFD24C 50%, #FFE07A 100%);
+  box-shadow: 0 8px 22px rgba(255, 196, 60, 0.45), 0 1px 0 rgba(255,255,255,0.95) inset;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.boost-pad:active { transform: scale(0.93); filter: brightness(1.12); }
+body.is-touch .boost-pad { display: block; }
+
+.icon-btn {
+  position: absolute;
+  right: calc(16px + var(--safe-r));
+  top: calc(96px + var(--safe-t));
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  display: none;
+  pointer-events: auto;
+  cursor: pointer;
+  font-family: var(--font-display); font-weight: 800; font-size: 14px; letter-spacing: 1px;
+  color: var(--aero-deep);
+  border: 1px solid rgba(255,255,255,0.9);
+  background: linear-gradient(180deg, #FFFFFF 0%, #E8F4FA 48%, #C4E3F2 52%, #DCF0F9 100%);
+  box-shadow: 0 6px 16px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.95) inset;
+}
+body.is-touch .icon-btn { display: block; }
+
+/* ==========================================================================
+   Boot screen
+   ========================================================================== */
+
+.boot-panel { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.boot-orb {
+  width: 62px; height: 62px; border-radius: 50%; margin-bottom: 10px;
+  background: radial-gradient(circle at 35% 30%, #FFFFFF 0%, #BFEEFF 32%, #4FC3E8 62%, #1B7BA8 100%);
+  box-shadow: 0 0 34px rgba(120, 210, 240, 0.95), 0 6px 18px var(--shadow-2);
+  animation: orb-bob 1.9s ease-in-out infinite;
+}
+@keyframes orb-bob {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-11px) scale(1.06); }
+}
+
+/* ==========================================================================
+   Currency icons
+   ==========================================================================
+   Drawn with border-radius and clip-path rather than shipped as images, for
+   the same reason every texture in the 3D scene is procedural: the project
+   contains no asset files at all.
+   ========================================================================== */
+
+.coin-icon {
+  display: inline-block;
+  width: 15px; height: 15px;
+  flex: 0 0 auto;
+  position: relative;
+}
+
+/* Droplet: a circle with one square corner, rotated to point up. */
+.icon-droplet {
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: radial-gradient(circle at 62% 34%, #FFFFFF 0%, #A9E4F5 30%, #4FC3E8 62%, #1B7BA8 100%);
+  box-shadow: 0 0 8px rgba(79, 195, 232, 0.7), inset 0 -2px 3px rgba(11, 71, 99, 0.3);
+}
+
+/* Prism: a faceted gem, two clipped triangles sharing a girdle. */
+.icon-prism {
+  clip-path: polygon(50% 0%, 100% 36%, 78% 100%, 22% 100%, 0% 36%);
+  background: linear-gradient(150deg, #FFFFFF 0%, #E8CFF6 26%, #C9A9F0 54%, #8CD8F0 78%, #FFD9E8 100%);
+  filter: drop-shadow(0 0 6px rgba(201, 169, 240, 0.85));
+}
+
+/* ==========================================================================
+   Wallet / account level
+   ========================================================================== */
+
+.wallet {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 4px 0 16px;
+}
+.wallet--inline { margin: 0 0 14px; }
+
+.coin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--aero-deep);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: 0 5px 14px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.coin--level { gap: 9px; }
+
+.lvl-badge {
+  display: grid;
+  place-items: center;
+  min-width: 26px; height: 26px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #0B4763;
+  background: linear-gradient(180deg, #FFFFFF 0%, #BFEEFF 48%, #6FD3F0 52%, #A6E7FA 100%);
+  border: 1px solid rgba(255,255,255,0.95);
+  box-shadow: 0 2px 6px var(--shadow-1);
+}
+
+.xp-tube {
+  position: relative;
+  width: 74px; height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(120,170,195,0.5), rgba(255,255,255,0.45));
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow: inset 0 1px 3px var(--shadow-1);
+}
+.xp-tube i {
+  display: block; height: 100%; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #FFFFFF 0%, #C9A9F0 45%, #8E6FD0 100%);
+  box-shadow: 0 0 8px rgba(201, 169, 240, 0.9);
+  transition: width 300ms ease-out;
+}
+
+/* ==========================================================================
+   Button variants
+   ========================================================================== */
+
+.gel--sm { padding: 9px 18px; font-size: 14px; }
+
+.gel--gold {
+  color: #6A4B00;
+  background: linear-gradient(180deg, #FFF6CF 0%, #FFE985 46%, #FFD24C 50%, #FFE07A 100%);
+}
+.gel--gold:hover { box-shadow: 0 12px 26px var(--shadow-2), 0 0 26px rgba(255, 210, 76, 0.85), 0 1px 0 rgba(255,255,255,0.95) inset; }
+
+.gel--danger { color: #8A3550; background: linear-gradient(180deg, #FFF0F4 0%, #FFD9E4 48%, #F2AFC4 52%, #FFE2EC 100%); }
+
+.gel[disabled], .gel.is-disabled {
+  filter: grayscale(0.6) brightness(1.04);
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+.gel[disabled]:hover, .gel.is-disabled:hover { transform: none; box-shadow: 0 6px 16px var(--shadow-1); }
+
+/* ==========================================================================
+   Wide panels, worlds row
+   ========================================================================== */
+
+.panel--wide { width: min(720px, 100%); }
+.panel--rebirth { width: min(620px, 100%); }
+.panel--worlds { padding: 16px 20px; margin-top: 14px; width: min(440px, 100%); }
+
+.world-row { position: relative; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+.world-chip {
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(210,235,246,0.45));
+  border: 1px solid rgba(255,255,255,0.85);
+}
+.world-chip.is-reached {
+  color: #0B4763;
+  background: linear-gradient(180deg, #FFFFFF 0%, #CFEEFB 48%, #7FD8F0 52%, #B6E9FA 100%);
+  box-shadow: 0 3px 10px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.world-chip.is-realm.is-reached {
+  background: linear-gradient(180deg, #FFF6CF 0%, #FFE0A0 48%, #FFC24C 52%, #FFE07A 100%);
+  color: #6A4B00;
+}
+
+/* ==========================================================================
+   Shop layout — preview beside catalog
+   ==========================================================================
+   The preview earns half the panel because it is the only place in the game
+   the wisp is ever visible at size. Below 720px it stacks above the grid and
+   shrinks rather than disappearing: on a phone the preview is *more* useful,
+   not less, because the in-flight wisp is even smaller there.
+   ========================================================================== */
+
+/* Wider than the other modals: this one now has two columns to hold. */
+#screen-shop .panel--wide { width: min(880px, 100%); }
+
+.shop-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: 14px;
+  align-items: start;
+}
+.shop-body .card-grid { margin-top: 0; }
+
+.wisp-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 12px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255,255,255,0.62) 0%, rgba(206,234,245,0.34) 60%, rgba(178,220,238,0.42) 100%);
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 6px 16px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  overflow: hidden;
+}
+/* The same gloss sweep every other glass surface in the game gets. */
+.wisp-stage::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 38%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.04));
+  pointer-events: none;
+}
+
+#wisp-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-sm);
+  /* A live WebGL canvas that has not painted yet should look like part of the
+     panel, not like a hole in it. */
+  background: radial-gradient(circle at 42% 34%, #FFFFFF 0%, #DCF0FA 38%, #A8D8EE 100%);
+}
+
+.wisp-caption { text-align: center; line-height: 1.35; }
+.wisp-caption strong { display: block; font-size: 15px; color: var(--ink); }
+
+@media (max-width: 720px) {
+  .shop-body { grid-template-columns: 1fr; }
+  .wisp-stage { flex-direction: row; align-items: center; gap: 12px; }
+  #wisp-preview { width: 108px; flex: 0 0 auto; }
+  .wisp-caption { text-align: left; }
+}
+
+/* ==========================================================================
+   Item cards (shop + upgrades)
+   ========================================================================== */
+
+.card-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 12px;
+  margin: 4px 0 18px;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  padding: 4px;
+  /* Own scroll container so a long catalog never scrolls the whole screen. */
+  overscroll-behavior: contain;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 13px 12px;
+  border-radius: var(--radius-md);
+  text-align: left;
+  background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.36) 44%, rgba(206,234,245,0.30) 45%, rgba(178,220,238,0.38) 100%);
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 6px 16px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 150ms cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow 200ms ease;
+}
+.card::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 44%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.66), rgba(255,255,255,0.05));
+  border-radius: var(--radius-md) var(--radius-md) 46% 46% / var(--radius-md) var(--radius-md) 20% 20%;
+  pointer-events: none;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 12px 24px var(--shadow-2), 0 0 18px rgba(120, 210, 240, 0.5); }
+.card.is-locked { cursor: not-allowed; filter: grayscale(0.5); opacity: 0.72; }
+.card.is-locked:hover { transform: none; }
+.card.is-equipped { box-shadow: 0 0 0 2px rgba(255,255,255,0.95), 0 8px 20px var(--shadow-2), 0 0 22px rgba(255, 233, 133, 0.8); }
+.card.is-maxed { opacity: 0.9; }
+
+.card-head { position: relative; display: flex; align-items: center; gap: 9px; }
+
+/* The colour swatch that previews a trail or skin. */
+.card-swatch {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 2px solid rgba(255,255,255,0.92);
+  box-shadow: 0 3px 8px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  position: relative;
+}
+.card-swatch::after {
+  content: "";
+  position: absolute; left: 22%; top: 14%;
+  width: 34%; height: 26%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.2));
+}
+
+.card-name { position: relative; font-family: var(--font-display); font-weight: 800; font-size: 15px; color: var(--aero-deep); }
+.card-blurb { position: relative; font-size: 12px; line-height: 1.4; color: var(--ink-soft); min-height: 32px; }
+.card-detail { position: relative; font-size: 12px; font-weight: 600; color: var(--teal-deep); }
+
+.card-foot { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 2px; }
+
+.price { display: flex; align-items: center; gap: 5px; font-family: var(--font-display); font-weight: 800; font-size: 14px; color: var(--aero-deep); }
+.price.is-poor { color: #B4506E; }
+
+.card-tag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.tag-owned { color: #2C6C8B; background: rgba(255,255,255,0.72); }
+.tag-equipped { color: #6A4B00; background: linear-gradient(180deg, #FFE985, #FFD24C); }
+.tag-locked { color: #7A5C8E; background: rgba(255,255,255,0.6); }
+
+/* Upgrade level pips. */
+.lv-row { position: relative; display: flex; gap: 4px; }
+.lv-pip {
+  width: 13px; height: 7px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow: inset 0 1px 2px var(--shadow-1);
+}
+.lv-pip.is-on {
+  background: linear-gradient(180deg, #FFFFFF, #7FE0D2 55%, #17A398 100%);
+  box-shadow: 0 0 7px rgba(63, 209, 192, 0.9);
+}
+
+/* ==========================================================================
+   HUD additions — shield, droplets, ghost, toast
+   ========================================================================== */
+
+.hud-left {
+  position: absolute;
+  left: calc(16px + var(--safe-l));
+  top: calc(112px + var(--safe-t));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.hud-shield { min-width: 118px; padding: 9px 14px; }
+.hud-drops, .hud-ghost { min-width: 0; padding: 7px 13px; display: flex; align-items: center; gap: 7px; }
+.hud-drops span { position: relative; font-family: var(--font-display); font-weight: 800; font-size: 17px; color: var(--aero-deep); }
+.hud-ghost { flex-direction: column; align-items: flex-start; gap: 0; }
+.hud-ghost .hud-value { font-size: 17px; }
+.hud-ghost.is-ahead .hud-value { color: var(--teal-deep); }
+.hud-ghost.is-behind .hud-value { color: #C98A00; }
+
+/* Wraps, so a fully upgraded capacity never pushes the chip off-screen. */
+.pip-row { position: relative; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; max-width: 148px; }
+
+/* A pip is a droplet: full ones are wet and lit, spent ones are empty glass. */
+.pip {
+  width: 15px; height: 15px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: rgba(255,255,255,0.30);
+  border: 1px solid rgba(255,255,255,0.75);
+  box-shadow: inset 0 1px 3px var(--shadow-1);
+  transition: background 220ms ease, box-shadow 220ms ease, transform 220ms ease;
+}
+.pip.is-full {
+  background: radial-gradient(circle at 62% 34%, #FFFFFF 0%, #BFF7EC 28%, #3FD1C0 62%, #17A398 100%);
+  box-shadow: 0 0 10px rgba(63, 209, 192, 0.9), inset 0 -2px 3px rgba(12, 90, 84, 0.3);
+}
+.pip.is-popping { animation: pip-pop 420ms cubic-bezier(0.2, 1.1, 0.4, 1); }
+@keyframes pip-pop {
+  0%   { transform: rotate(-45deg) scale(1.5); filter: brightness(2.2); }
+  100% { transform: rotate(-45deg) scale(1); filter: none; }
+}
+
+.regen-tube {
+  position: relative;
+  margin-top: 6px;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.4);
+  border: 1px solid rgba(255,255,255,0.7);
+}
+.regen-tube i {
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, #7FE0D2, #FFFFFF);
+  transition: width 200ms linear;
+}
+
+/* Zero pips: the whole chip pulses. This state must never be a surprise. */
+.hud-shield.is-exposed {
+  animation: shield-warn 1.05s ease-in-out infinite;
+  box-shadow: 0 8px 22px var(--shadow-1), 0 0 20px rgba(255, 150, 120, 0.85), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+@keyframes shield-warn {
+  0%, 100% { box-shadow: 0 8px 22px var(--shadow-1), 0 0 14px rgba(255, 150, 120, 0.5), 0 1px 0 rgba(255,255,255,0.9) inset; }
+  50%      { box-shadow: 0 8px 22px var(--shadow-1), 0 0 30px rgba(255, 150, 120, 1), 0 1px 0 rgba(255,255,255,0.9) inset; }
+}
+
+.hud-sub { position: relative; display: block; font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
+
+.hud-mult {
+  position: relative;
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-family: var(--font-display); font-weight: 800; font-size: 12px;
+  color: #6A4B00;
+  background: linear-gradient(180deg, #FFE985, #FFD24C);
+}
+
+/* Checkpoint / portal announcement, below the world name. */
+.hud-toast {
+  position: absolute;
+  left: 50%; top: 25%;
+  transform: translateX(-50%);
+  font-family: var(--font-display); font-weight: 800;
+  font-size: clamp(15px, 2.3vmin, 22px);
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 16px rgba(255,255,255,0.9), 0 2px 10px var(--shadow-3);
+  opacity: 0;
+  white-space: nowrap;
+}
+.hud-toast.is-shown { animation: toast-flash 1.9s ease-out; }
+@keyframes toast-flash {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  16%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+  72%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+}
+
+/* ==========================================================================
+   Results additions
+   ========================================================================== */
+
+.res-cause { margin-top: -6px; font-size: 14px; }
+
+.earn-row { position: relative; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 4px 0 12px; }
+.earn {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 15px;
+  border-radius: 999px;
+  font-family: var(--font-display); font-weight: 800; font-size: 16px;
+  color: var(--aero-deep);
+  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(190,235,250,0.55));
+  border: 1px solid rgba(255,255,255,0.9);
+}
+.earn-label { font-size: 11px; letter-spacing: 0.1em; color: var(--ink-soft); }
+
+.levelup {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display); font-weight: 800; font-size: 15px;
+  color: #4A3272;
+  background: linear-gradient(180deg, #FFFFFF 0%, #E8DCFA 48%, #C9A9F0 52%, #E4D6FA 100%);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 6px 18px rgba(201, 169, 240, 0.6);
+  animation: badge-pop 620ms cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+/* ==========================================================================
+   Rebirth
+   ========================================================================== */
+
+.rebirth-meter { position: relative; margin: 10px 0 16px; }
+.progress-tube--tall { height: 14px; }
+
+.reb-grid { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; text-align: left; margin-bottom: 14px; }
+.reb-col ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+.reb-col--keep li { color: var(--teal-deep); }
+.reb-col--reset li { color: #B4506E; }
+
+.reb-payout {
+  position: relative;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-bottom: 14px;
+  font-family: var(--font-display); font-weight: 800; font-size: 26px;
+  color: #5A3F86;
+}
+.reb-payout .coin-icon { width: 24px; height: 24px; }
+
+/* ==========================================================================
+   Leaderboard + achievements
+   ========================================================================== */
+
+.net-state {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.8);
+}
+.net-state.is-online { color: var(--teal-deep); }
+.net-state.is-offline { color: #8A6A3A; }
+
+.board { position: relative; list-style: none; margin: 0 0 14px; padding: 0; max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; text-align: left; }
+.board-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  background: rgba(255,255,255,0.45);
+  border: 1px solid rgba(255,255,255,0.7);
+  margin-bottom: 6px;
+}
+.board-row.is-me { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(190,235,250,0.7)); box-shadow: 0 0 0 2px rgba(255,233,133,0.85); }
+.board-rank { font-family: var(--font-display); font-weight: 800; color: var(--ink-soft); }
+.board-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-score { font-family: var(--font-display); font-weight: 800; color: var(--aero-deep); }
+.board-dist { font-size: 12px; color: var(--ink-soft); }
+
+.text-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui); font-size: 14px;
+  color: var(--ink);
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: inset 0 2px 5px var(--shadow-1);
+  outline: none;
+}
+.text-input:focus { box-shadow: inset 0 2px 5px var(--shadow-1), 0 0 0 3px rgba(255, 233, 133, 0.8); }
+
+.ach-list { position: relative; display: flex; flex-direction: column; gap: 7px; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; text-align: left; margin-bottom: 14px; }
+.ach-item {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  gap: 11px;
+  align-items: center;
+  padding: 9px 13px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.42);
+  border: 1px solid rgba(255,255,255,0.7);
+}
+.ach-item.is-earned { background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(190,240,225,0.6)); }
+.ach-mark {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 800; color: #fff;
+  background: rgba(140,180,200,0.45);
+}
+.ach-item.is-earned .ach-mark { background: linear-gradient(180deg, #7FE0D2, #17A398); box-shadow: 0 0 10px rgba(63,209,192,0.8); }
+.ach-name { font-weight: 700; font-size: 14px; color: var(--aero-deep); }
+.ach-desc { font-size: 12px; color: var(--ink-soft); }
+.ach-reward { display: flex; align-items: center; gap: 5px; font-family: var(--font-display); font-weight: 800; font-size: 13px; color: var(--aero-deep); }
+
+/* ==========================================================================
+   Photo mode
+   ========================================================================== */
+
+.photo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + var(--safe-b));
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(620px, calc(100% - 32px));
+  padding: 16px 20px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  box-shadow: 0 18px 46px var(--shadow-2), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.photo-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; margin-bottom: 10px; }
+.photo-field { display: block; text-align: left; }
+.photo-field > span { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 5px; }
+.photo-field i { font-style: normal; color: var(--ink-soft); }
+.photo-field input[type="range"] { height: 10px; }
+
+/* In photo mode everything else gets out of the way — except the diagnostics
+   panel, which must be able to appear over any state including this one. */
+body.is-photo #hud, body.is-photo .screen:not(#screen-diag) { display: none !important; }
+
+/* ==========================================================================
+   Diagnostics panel
+   ==========================================================================
+   Rendered by the always-on core in index.html, which may be running with no
+   modules loaded and no WebGL context — so this styling has to stand on its
+   own and must not depend on anything the game sets up.
+   ========================================================================== */
+
+/* Above every other screen: it reports on them, so it sits over them. */
+#screen-diag { z-index: 40; }
+#screen-diag.is-active { display: flex; }
+
+.diag-report {
+  position: relative;
+  margin: 4px 0 14px;
+  padding: 14px 16px;
+  max-height: min(46vh, 420px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 2px 6px var(--shadow-1);
+  /* Selectable even though the rest of the game disables selection, because
+     manual copy is the fallback when the clipboard API is unavailable. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+.diag-report:focus-visible { outline: 3px solid rgba(255, 233, 133, 0.95); outline-offset: 2px; }
+
+#diag-copied { min-height: 18px; margin: 0; font-weight: 600; color: var(--teal-deep); }
+
+/* --- Quiet badge ---------------------------------------------------------
+   The counterweight to the panel. Something is wrong, it is not urgent, and
+   the player is mid-flight: one small pill in a corner they are not looking
+   at, styled as glass so it belongs here rather than as a browser warning. */
+.diag-badge {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 41;
+  max-width: min(64vw, 320px);
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-align: left;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(233, 246, 252, 0.72));
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px var(--shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: pointer;
+  opacity: 0.9;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.diag-badge:hover, .diag-badge:focus-visible { opacity: 1; transform: translateY(-1px); }
+.diag-badge[hidden] { display: none; }
+/* Photo mode hides the whole UI; the badge is UI. */
+body.is-photo .diag-badge { display: none !important; }
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 640px) {
+  .panel { padding: 24px 20px 20px; border-radius: var(--radius-md); }
+  .glass-chip { min-width: 108px; padding: 8px 13px; }
+  .hud-value { font-size: 20px; }
+  .result-grid { grid-template-columns: repeat(3, 1fr); gap: 12px 6px; }
+  .gel--big { padding: 14px 34px; font-size: 19px; }
+  .panel--stats { flex-direction: row; }
+
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(142px, 1fr)); gap: 9px; }
+  .reb-grid { grid-template-columns: 1fr; gap: 8px; }
+  .wallet { gap: 7px; }
+  .coin { padding: 6px 11px; font-size: 14px; }
+  .xp-tube { width: 56px; }
+  .hud-left { top: calc(104px + var(--safe-t)); }
+  .hud-shield { min-width: 104px; padding: 8px 12px; }
+  .board-row { grid-template-columns: 28px 1fr auto; font-size: 13px; }
+  .board-dist { display: none; }
+}
+
+/* Short/landscape phones: keep the hub from overflowing. */
+@media (max-height: 560px) {
+  .logo-text { font-size: clamp(34px, 9vmin, 56px); }
+  .tagline { margin-bottom: 10px; }
+  .panel--stats, .panel--worlds { margin-top: 10px; padding: 12px 16px; }
+  .wallet { margin-bottom: 10px; }
+  .card-grid { max-height: 42vh; }
+  .ach-list { max-height: 40vh; }
+  /* The boost pad sits where the photo bar wants to be; keep them apart. */
+  .photo-bar { padding: 10px 16px 8px; }
+  .photo-controls { margin-bottom: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #bokeh, .logo-text::after, .boot-orb, .hud-biome.is-shown,
+  .hud-toast.is-shown, .hud-shield.is-exposed, .pip.is-popping { animation: none; }
+  .screen.is-active { animation: none; }
+}
+
+/* ==========================================================================
+   EVOLUTION TREE
+   ==========================================================================
+   The tree is the one screen in the game that is a *diagram* rather than a
+   list, so it gets a wider panel and a horizontally scrolling lattice. The
+   node boxes reuse the card's glass recipe deliberately — a new surface
+   treatment here would read as a different app bolted on.
+
+   Branch colour arrives per-node as --evo-color / --evo-glow, set inline from
+   BRANCHES in evolution.js, so the palette lives in one place and CSS only
+   ever consumes it.
+   ========================================================================== */
+
+.panel--tree {
+  width: min(1080px, 100%);
+  max-height: calc(100dvh - 32px);
+  text-align: center;
+}
+
+/* Short viewports: buy back vertical space before the lattice has to scroll. */
+@media (max-height: 800px) {
+  .panel--tree { padding: 20px 24px 18px; }
+  .evo-lane { gap: 10px; padding: 4px 8px; }
+  .evo-lanes { gap: 7px; }
+  .evo-summary { margin: 10px 0 2px; padding: 9px 14px; }
+}
+
+/* --- Build summary ------------------------------------------------------ */
+
+.evo-summary {
+  position: relative;
+  margin: 14px 0 4px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255,255,255,0.60), rgba(206,234,245,0.30));
+  border: 1px solid rgba(255,255,255,0.80);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+
+.evo-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.evo-form-tag {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: capitalize;
+  padding: 3px 12px;
+  border-radius: 999px;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(214,238,248,0.7));
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 2px 6px var(--shadow-1);
+}
+.evo-form-tag.is-prism   { background: linear-gradient(180deg, #FFF3D0, #FFD24C); }
+.evo-form-tag.is-comet   { background: linear-gradient(180deg, #DFF7FF, #63D8F0); }
+.evo-form-tag.is-bastion { background: linear-gradient(180deg, #E9FBDD, #8CD867); }
+
+.evo-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.evo-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.8);
+}
+.evo-stat em { font-style: normal; color: var(--ink-soft); }
+.evo-stat b  { font-weight: 700; color: var(--ink); }
+
+/* --- The lattice -------------------------------------------------------- */
+
+.evo-tree {
+  position: relative;
+  margin: 14px 0 16px;
+  padding: 6px 4px 10px;
+  /* The lattice is taller than a laptop viewport once all four lanes are in.
+     Capping it here — rather than letting the panel grow — keeps the title,
+     the wallet and the Back button on screen at every window size, which is
+     what stops the panel being clipped at both ends on a short display. */
+  max-height: min(56vh, 660px);
+  overflow: auto;
+  /* The lattice is wider than the panel on every phone and most laptops.
+     Scrolling it is expected; the panel clipping it would not be. */
+  -webkit-overflow-scrolling: touch;
+}
+
+.evo-wires {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 0;
+}
+
+.evo-wire {
+  fill: none;
+  stroke-width: 2;
+  stroke-opacity: 0.22;
+  stroke-linecap: round;
+  stroke-dasharray: 4 5;
+}
+/* A wire between two owned nodes is the path already walked: solid and lit. */
+.evo-wire.is-lit {
+  stroke-width: 3;
+  stroke-opacity: 0.85;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+/* Owned parent, unowned child — the live frontier. */
+.evo-wire.is-half {
+  stroke-opacity: 0.5;
+  stroke-dasharray: 6 4;
+}
+
+.evo-grid {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: max-content;
+  padding: 4px;
+}
+
+.evo-col--root { display: flex; align-items: center; }
+
+.evo-lanes { display: flex; flex-direction: column; gap: 10px; }
+
+.evo-lane {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg,
+      color-mix(in srgb, var(--evo-color) 14%, transparent),
+      transparent 62%);
+}
+
+.evo-lane-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 132px;
+  flex: 0 0 132px;
+  text-align: left;
+}
+.evo-lane-name {
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.evo-lane-blurb {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+
+.evo-track { display: flex; align-items: center; gap: 18px; }
+
+.evo-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  min-width: 140px;
+}
+
+/* --- Nodes -------------------------------------------------------------- */
+
+.evo-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 140px;
+  padding: 9px 10px 8px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.70) 0%, rgba(255,255,255,0.34) 44%,
+      rgba(206,234,245,0.28) 45%, rgba(178,220,238,0.36) 100%);
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 5px 13px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+  transition: transform 150ms cubic-bezier(0.2, 0.9, 0.3, 1),
+              box-shadow 200ms ease, opacity 200ms ease;
+}
+.evo-node::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 44%;
+  border-radius: var(--radius-sm) var(--radius-sm) 40% 40% / var(--radius-sm) var(--radius-sm) 18% 18%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(255,255,255,0.04));
+  pointer-events: none;
+}
+
+.evo-name {
+  position: relative;
+  font-family: var(--font-display);
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.evo-detail {
+  position: relative;
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--ink-soft);
+}
+.evo-foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.evo-foot .coin-icon { width: 13px; height: 13px; }
+.evo-foot.is-poor   { color: #C2543F; }
+.evo-foot.is-reason { font-weight: 500; font-size: 10px; color: var(--ink-soft); }
+.evo-foot.is-owned-tag { color: var(--green-shade); letter-spacing: 0.04em; }
+
+/* Owned: the branch colour floods in and the box sits proud. */
+.evo-node.is-owned {
+  background: linear-gradient(180deg,
+      color-mix(in srgb, var(--evo-color) 38%, white) 0%,
+      color-mix(in srgb, var(--evo-color) 22%, white) 46%,
+      color-mix(in srgb, var(--evo-color) 34%, white) 100%);
+  border-color: color-mix(in srgb, var(--evo-color) 55%, white);
+  box-shadow:
+    0 6px 16px color-mix(in srgb, var(--evo-glow) 40%, transparent),
+    0 1px 0 rgba(255,255,255,0.95) inset;
+}
+
+/* Affordable right now — the only nodes that pulse. */
+.evo-node.is-ready {
+  border-color: color-mix(in srgb, var(--evo-color) 60%, white);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--evo-color) 32%, transparent),
+    0 6px 16px var(--shadow-1),
+    0 1px 0 rgba(255,255,255,0.9) inset;
+}
+
+/* Reachable but unaffordable. */
+.evo-node.is-available { opacity: 0.92; }
+
+/* Prereqs unmet: legible, but clearly not yet yours. */
+.evo-node.is-locked {
+  opacity: 0.5;
+  filter: saturate(0.55);
+  cursor: not-allowed;
+}
+
+.evo-node.is-root {
+  width: 104px;
+  align-items: center;
+  text-align: center;
+}
+.evo-node.is-root .evo-foot { justify-content: center; }
+
+/* Capstones are the reason to walk a branch — they get the chrome ring. */
+.evo-node.is-capstone {
+  border-width: 2px;
+  border-color: color-mix(in srgb, var(--evo-color) 70%, white);
+}
+.evo-node.is-capstone .evo-name {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 12px;
+}
+
+/* The single suggested next step. */
+.evo-node.is-goal {
+  animation: evo-goal 2.2s ease-in-out infinite;
+}
+@keyframes evo-goal {
+  0%, 100% { box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--evo-color) 38%, transparent),
+      0 6px 16px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset; }
+  50%      { box-shadow:
+      0 0 0 5px color-mix(in srgb, var(--evo-color) 26%, transparent),
+      0 8px 22px var(--shadow-2), 0 1px 0 rgba(255,255,255,0.95) inset; }
+}
+
+.evo-node:hover:not(.is-locked):not(.is-owned) { transform: translateY(-2px); }
+.evo-node:active:not(.is-locked):not(.is-owned) { transform: translateY(0); }
+
+/* Motion-sensitive players lose the pulse, not the highlight. */
+@media (prefers-reduced-motion: reduce) {
+  .evo-node.is-goal { animation: none; }
+}
+
+.btn-row--split {
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+}
+
+.gel--evolve {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.42) 46%,
+                    rgba(201,169,240,0.40) 47%, rgba(160,214,240,0.55) 100%);
+}
+
+/* Narrow screens: the lane label would eat half the width, so drop it to a
+   colour bar and let the nodes have the room. */
+@media (max-width: 720px) {
+  .evo-lane-label { width: 84px; flex-basis: 84px; }
+  .evo-lane-blurb { display: none; }
+  .evo-node, .evo-cell { width: 124px; min-width: 124px; }
+}
+
+/* ==========================================================================
+   DAILY OBJECTIVES (hub strip)
+   ==========================================================================
+   Sits between the button stack and the records panel — the last thing read
+   before pressing Fly. Each row is one line: what to do, how far along, what
+   it pays. A row that is finished swaps its reward text for a Claim button,
+   because an unclaimed reward should look like a button and not like a label.
+   ========================================================================== */
+
+.panel--quests {
+  width: min(440px, 100%);
+  padding: 14px 18px 16px;
+  margin-top: 16px;
+}
+
+.quests-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.quests-head .panel-subtitle { margin: 0; }
+
+.gel--tiny {
+  padding: 3px 12px;
+  font-size: 11px;
+  border-radius: 999px;
+  min-width: 0;
+}
+
+.quest-list { display: flex; flex-direction: column; gap: 7px; }
+
+.quest {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "text   action"
+    "bar    count";
+  align-items: center;
+  gap: 3px 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  text-align: left;
+}
+
+.quest-text {
+  grid-area: text;
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.quest-bar {
+  grid-area: bar;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(27, 123, 168, 0.16);
+  overflow: hidden;
+}
+.quest-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--aqua), var(--sky));
+  box-shadow: 0 0 8px rgba(63, 209, 192, 0.6);
+  transition: width 420ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.quest-count {
+  grid-area: count;
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.quest-action { grid-area: action; justify-self: end; white-space: nowrap; }
+.quest-reward { font-size: 11.5px; font-weight: 700; color: var(--teal-deep); }
+.quest-action .is-done,
+.quest-action.is-done { font-size: 11px; color: var(--green-shade); font-weight: 600; }
+
+/* Finished: the whole row lifts, so a claimable reward is visible from across
+   the screen rather than only when the bar is read. */
+.quest.is-complete {
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(214,245,225,0.55));
+  border-color: rgba(140, 216, 103, 0.75);
+  box-shadow: 0 0 0 2px rgba(140, 216, 103, 0.22);
+}
+.quest.is-complete .quest-bar i { background: linear-gradient(90deg, var(--green), var(--aqua)); }
+
+.quest.is-claimed {
+  opacity: 0.62;
+  box-shadow: none;
+  border-color: rgba(255,255,255,0.72);
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.gel--claim {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.92) 0%, rgba(236,255,224,0.5) 46%,
+      rgba(140,216,103,0.55) 47%, rgba(110,190,80,0.7) 100%);
+  font-weight: 700;
+}
+
+@media (max-width: 520px) {
+  .quest-text { font-size: 11.5px; }
+  .panel--quests { padding: 12px 14px 14px; }
+}
+
+/* ==========================================================================
+   SEASON PASS
+   ==========================================================================
+   Two lanes over a horizontally scrolling track. The column — free chip,
+   tier number, premium chip — is the repeating unit, so the two lanes stay in
+   register without a grid: each column is its own flex stack and the row
+   alignment falls out of equal chip heights.
+   ========================================================================== */
+
+.panel--season {
+  width: min(1000px, 100%);
+  max-height: calc(100dvh - 32px);
+  text-align: center;
+}
+
+/* Says out loud that no payment rail is connected. Do not remove this without
+   removing the stub in season.js first. */
+.sp-badge {
+  position: relative;
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #7A4A12;
+  background: linear-gradient(180deg, #FFE9B8, #FFD07A);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+.sp-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+}
+
+.sp-tier-badge { display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
+.sp-tier-badge b { font-family: var(--font-display); font-size: 24px; color: var(--ink); }
+
+.sp-progress { flex: 1; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.sp-progress .progress-tube { width: 100%; }
+
+.sp-premium-tag {
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #6B4A00;
+  background: linear-gradient(180deg, #FFF0C4, var(--sun-core));
+  border: 1px solid rgba(255,255,255,0.85);
+}
+.is-hidden { display: none !important; }
+
+.sp-track {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 14px;
+  padding: 4px 2px 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sp-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+/* The lane names, pinned to the left edge while the tiers scroll past. The
+   opaque background is required, not decorative: without it the columns
+   sliding underneath show straight through the labels. */
+.sp-col--labels {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  align-items: flex-end;
+  padding-right: 8px;
+  background: linear-gradient(90deg,
+      rgba(226, 241, 248, 0.97) 0%,
+      rgba(226, 241, 248, 0.97) 76%,
+      rgba(226, 241, 248, 0) 100%);
+}
+
+.sp-lane-name {
+  display: flex;
+  align-items: center;
+  height: 62px;           /* matches .sp-reward height, keeping the rows level */
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.sp-lane-name.is-premium { color: #B07A16; }
+
+.sp-tier-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  min-width: 22px;
+}
+.sp-col.is-reached .sp-tier-num { color: var(--teal-deep); }
+/* The next tier is the one the player is working on — mark it, not the last
+   one they finished, because that is the number the bar is filling toward. */
+.sp-col.is-next .sp-tier-num {
+  color: var(--ink);
+  background: linear-gradient(180deg, #FFFFFF, #CFEAF5);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(63, 209, 192, 0.5);
+}
+
+.sp-reward {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 76px;
+  height: 62px;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255,255,255,0.68), rgba(200,230,242,0.34));
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow: 0 3px 9px var(--shadow-1);
+  font-size: 10.5px;
+  color: var(--ink);
+  overflow: hidden;
+}
+.sp-reward.is-empty {
+  background: rgba(255,255,255,0.14);
+  border-style: dashed;
+  border-color: rgba(255,255,255,0.5);
+  box-shadow: none;
+}
+.sp-reward .coin-icon { width: 18px; height: 18px; }
+.sp-reward-label { line-height: 1.15; text-align: center; }
+
+.sp-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 1px 4px var(--shadow-1);
+}
+
+.sp-reward.is-cosmetic .sp-reward-label { font-weight: 600; font-size: 9.5px; }
+
+/* Earned and waiting — the only state that pulses, because it is the only one
+   that wants a click. */
+.sp-reward.is-claimable {
+  cursor: pointer;
+  border-color: rgba(140, 216, 103, 0.8);
+  animation: sp-pulse 2s ease-in-out infinite;
+}
+@keyframes sp-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(140,216,103,0.30), 0 3px 9px var(--shadow-1); }
+  50%      { box-shadow: 0 0 0 5px rgba(140,216,103,0.18), 0 5px 14px var(--shadow-2); }
+}
+.sp-reward.is-claimable:hover { transform: translateY(-2px); }
+
+.sp-reward.is-claimed { opacity: 0.55; }
+.sp-tick {
+  position: absolute;
+  top: 3px; right: 5px;
+  font-size: 11px;
+  color: var(--green-shade);
+  font-weight: 700;
+}
+
+/* Not yet reached. */
+.sp-reward.is-future { opacity: 0.62; filter: saturate(0.7); }
+
+/* Reached, but the lane is shut — this is the state the premium pitch rests
+   on, so it stays fully legible and only loses its colour. */
+.sp-reward.is-shut {
+  filter: grayscale(0.85);
+  opacity: 0.78;
+}
+.sp-reward.is-shut::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+      45deg, rgba(12,58,82,0.05) 0 6px, rgba(12,58,82,0.11) 6px 12px);
+  pointer-events: none;
+}
+
+.gel--buy {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.95) 0%, rgba(255,240,196,0.55) 46%,
+      rgba(255,210,76,0.75) 47%, rgba(240,175,40,0.9) 100%);
+  font-weight: 700;
+}
+
+.gel--season {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.92) 0%, rgba(255,244,214,0.45) 46%,
+      rgba(255,214,120,0.5) 47%, rgba(255,190,90,0.62) 100%);
+}
+
+@media (max-width: 720px) {
+  .sp-reward { width: 64px; height: 56px; font-size: 9.5px; }
+  .sp-head { gap: 10px; padding: 8px 10px; }
+}
+
+/* ==========================================================================
+   STORE
+   ==========================================================================
+   Sections of horizontally scrolling cards. Each shelf scrolls on its own so
+   a long ladder never forces the whole panel to scroll sideways, which would
+   drag the section headings out of view with it.
+   ========================================================================== */
+
+.panel--store {
+  width: min(1020px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  text-align: center;
+}
+
+.st-section { margin: 14px 0 4px; text-align: left; }
+
+.st-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+  padding: 0 2px;
+}
+
+.st-section-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.st-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.st-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  width: 138px;
+  padding: 12px 10px 11px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.36) 45%,
+      rgba(206,234,245,0.30) 46%, rgba(178,220,238,0.40) 100%);
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 6px 15px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.9) inset;
+}
+.st-card::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 42%;
+  border-radius: var(--radius-md) var(--radius-md) 40% 40% / var(--radius-md) var(--radius-md) 16% 16%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.03));
+  pointer-events: none;
+}
+.st-card > * { position: relative; }
+
+.st-card--bundle { width: 186px; align-items: stretch; text-align: left; }
+.st-card--pack { width: 124px; }
+.st-card.is-owned { opacity: 0.62; }
+
+/* --- Tags --------------------------------------------------------------- */
+
+.st-tag {
+  position: absolute;
+  top: -6px;
+  right: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 2px 5px var(--shadow-1);
+  white-space: nowrap;
+}
+.st-tag--off  { background: linear-gradient(180deg,#FFE9B8,#FFC85C); color:#7A4A12; }
+.st-tag--save { background: linear-gradient(180deg,#D9F7C6,#8CD867); color:#2F5B1E; }
+.st-tag--best { background: linear-gradient(180deg,#FFF0C4,#FFD24C); color:#6B4A00; }
+.st-tag--pop  { background: linear-gradient(180deg,#DFF3FC,#8FD4EE); color:#0C3A52; }
+/* Two tags can appear on one card, so the second sits on the opposite edge. */
+.st-tag--once { left: 8px; right: auto; background: linear-gradient(180deg,#F6E4FF,#C9A9F0); color:#4A2A6B; }
+
+/* --- Card innards ------------------------------------------------------- */
+
+.st-swatch {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 2px 8px var(--shadow-1), 0 1px 0 rgba(255,255,255,0.85) inset;
+}
+.st-swatch--tiny { width: 15px; height: 15px; flex: 0 0 15px; }
+
+.st-name { font-family: var(--font-display); font-size: 13px; color: var(--ink); line-height: 1.2; }
+.st-name--lg { font-size: 15px; }
+.st-kind {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.st-blurb { font-size: 11px; line-height: 1.35; color: var(--ink-soft); margin-bottom: 2px; }
+
+.st-grants {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.42);
+  border: 1px solid rgba(255,255,255,0.7);
+}
+.st-grant { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink); }
+.st-grant .coin-icon { width: 15px; height: 15px; }
+
+.st-pack-icon { width: 30px; height: 30px; }
+.st-amount { font-family: var(--font-display); font-size: 17px; color: var(--ink); line-height: 1.1; }
+.st-bonus {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--green-shade);
+  min-height: 13px;      /* reserves the line so cards without a bonus stay level */
+}
+
+.st-buy s { opacity: 0.55; font-weight: 400; margin-right: 3px; }
+
+.gel--store {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.42) 46%,
+      rgba(201,169,240,0.34) 47%, rgba(160,196,240,0.55) 100%);
+}
+
+@media (max-width: 720px) {
+  .st-card { width: 124px; }
+  .st-card--bundle { width: 168px; }
+  .st-card--pack { width: 112px; }
+}
+
+/* ==========================================================================
+   IN-RUN OBJECTIVES (HUD)
+   ==========================================================================
+   Deliberately the quietest panel on the HUD. It sits in peripheral vision for
+   the whole flight, so it has to be readable at a glance and invisible the
+   rest of the time — no pulsing, no saturation, nothing that competes with the
+   combo counter or the integrity pips for attention.
+
+   The completion state is the one exception, and even that only desaturates
+   and strikes through rather than lighting up: the toast already announces the
+   completion loudly, and a second celebration in the corner would be noise.
+   ========================================================================== */
+
+.hud-objectives {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 158px;
+  padding: 7px 10px 8px;
+}
+
+.obj-list { display: flex; flex-direction: column; gap: 5px; width: 100%; }
+
+.obj-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  transition: opacity 260ms ease;
+}
+
+.obj-text {
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--ink);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.obj-tube {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(12, 58, 82, 0.16);
+  overflow: hidden;
+}
+.obj-tube > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--teal-deep), var(--aqua-bright));
+  /* Eased rather than instant: the bar is read out of the corner of the eye,
+     and a value that jumps is much harder to parse than one that slides. */
+  transition: width 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.obj-row.is-done { opacity: 0.5; }
+.obj-row.is-done .obj-text { text-decoration: line-through; }
+.obj-row.is-done .obj-tube > i {
+  background: linear-gradient(90deg, var(--green-shade), #8CD867);
+}
+
+@media (max-width: 720px) {
+  /* On a phone the left column is already crowded and the corridor is the
+     thing worth looking at. Progress bars survive; the wording does not. */
+  .hud-objectives { min-width: 0; }
+  .obj-text {
+    display: block;
+    max-width: 108px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+/* ==========================================================================
+   MENU BADGES
+   ==========================================================================
+   A count pinned to the corner of a hub button. Only ever shown for something
+   actionable right now — see refreshBadges() in ui/hub.js for why that
+   restriction is the whole point.
+   ========================================================================== */
+
+.menu-badge {
+  position: absolute;
+  /* Inside the button's box, not hanging off it. The gel buttons carry
+     `overflow: hidden` so their gloss ::before keeps its rounded shape, which
+     means anything outside the border box is simply clipped away. Sitting the
+     badge just inside the top-right corner is the fix that does not cost the
+     gloss. */
+  top: 2px;
+  right: 3px;
+  z-index: 3;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3.5px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: #fff;
+  background: linear-gradient(180deg, #FF8A5B, #E8552F);
+  border: 1.5px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(200, 70, 30, 0.5);
+  /* The badge sits on a gel button whose ::before gloss would otherwise cover
+     it, and pointer events would swallow the click meant for the button. */
+  pointer-events: none;
+}
+
+/* The gel buttons are the positioning context for the badge. They are not
+   positioned by default, so anchoring is set here rather than assumed. */
+.gel { position: relative; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .menu-badge { animation: badge-in 260ms cubic-bezier(0.2, 1.2, 0.35, 1); }
+  @keyframes badge-in {
+    from { transform: scale(0.4); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+}
+
+/* ==========================================================================
+   DAILY STREAK
+   ==========================================================================
+   Seven cells in a row, one per day of the cycle. The row has to survive a
+   phone width without wrapping — a wrapped week reads as two weeks — so the
+   cells flex down rather than staying a fixed size.
+   ========================================================================== */
+
+.panel--streak { width: min(520px, 100%); }
+
+.streak-count {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--teal-deep);
+}
+
+.streak-row {
+  display: flex;
+  gap: 5px;
+  margin: 8px 0 10px;
+}
+
+.streak-day {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 7px 2px 6px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(206,234,245,0.28));
+  border: 1px solid rgba(255,255,255,0.7);
+}
+
+.streak-day-n {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.streak-day-amt {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.streak-day-amt.is-prisms   { color: #7A4FB0; }
+.streak-day-amt.is-seasonXp { color: #B07A16; }
+
+.streak-day.is-claimed {
+  background: linear-gradient(180deg, rgba(214,244,206,0.75), rgba(168,220,150,0.4));
+  border-color: rgba(140, 216, 103, 0.7);
+}
+.streak-day.is-claimed .streak-day-n { color: var(--green-shade); }
+
+/* Today, unclaimed — the one cell asking for a click. */
+.streak-day.is-today {
+  background: linear-gradient(180deg, #FFFFFF, #D6EEF8);
+  border-color: rgba(63, 209, 192, 0.85);
+  box-shadow: 0 0 0 2px rgba(63, 209, 192, 0.28), 0 3px 9px var(--shadow-1);
+  transform: translateY(-1px);
+}
+.streak-day.is-today .streak-day-n { color: var(--ink); }
+
+.gel--claim {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.94) 0%, rgba(226,248,214,0.5) 46%,
+      rgba(168,220,150,0.6) 47%, rgba(124,196,96,0.75) 100%);
+}
+
+@media (max-width: 720px) {
+  .streak-day { padding: 6px 1px 5px; }
+  .streak-day-amt { font-size: 9px; }
+}
+
+/* ==========================================================================
+   COLLECTION
+   ==========================================================================
+   A headline figure, then the sets as rows. The rows are a list rather than
+   cards on purpose: a set is read as "have / total", and a column of aligned
+   fractions is scannable in a way a grid of boxes is not.
+   ========================================================================== */
+
+.panel--collection {
+  width: min(620px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.col-overall {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 14px;
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+}
+
+.col-overall-figure {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.col-overall-figure b { font-size: 24px; }
+.col-overall-figure .muted { margin: 0 2px; }
+
+.col-overall-bar { flex: 1; }
+.col-overall-bar .progress-tube { width: 100%; }
+
+.col-sets { display: flex; flex-direction: column; gap: 8px; }
+
+.col-set {
+  padding: 9px 12px 10px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255,255,255,0.58), rgba(206,234,245,0.26));
+  border: 1px solid rgba(255,255,255,0.75);
+  text-align: left;
+}
+
+.col-set-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.col-set-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.col-set-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;   /* keeps the fractions in a column */
+}
+
+.col-set-tube { width: 100%; }
+
+.col-set-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 20px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.col-set-foot.is-done { color: var(--green-shade); font-weight: 600; }
+.col-set-next { font-size: 11px; }
+
+/* Finished and unclaimed — the only row with anything to press. */
+.col-set.is-complete:not(.is-claimed) {
+  background: linear-gradient(180deg, rgba(226,248,214,0.72), rgba(168,220,150,0.34));
+  border-color: rgba(140, 216, 103, 0.72);
+}
+.col-set.is-complete:not(.is-claimed) .col-set-count { color: var(--green-shade); }
+
+.col-set.is-claimed { opacity: 0.62; }
+
+.gel--collection {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.42) 46%,
+      rgba(190,225,205,0.38) 47%, rgba(150,205,190,0.58) 100%);
+}
+
+@media (max-width: 720px) {
+  .col-overall { gap: 8px; padding: 9px 10px; }
+  .col-overall-figure { font-size: 17px; }
+  .col-overall-figure b { font-size: 20px; }
+}
+
+/* ==========================================================================
+   MODIFIERS
+   ==========================================================================
+   The multiplier is the largest thing on the screen. It is the entire reason
+   anyone turns a handicap on, so it gets display type and its own slab, and
+   everything else is a list beneath it.
+   ========================================================================== */
+
+.panel--modifiers {
+  width: min(640px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.mod-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 8px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(206,234,245,0.32));
+  border: 1px solid rgba(255,255,255,0.8);
+}
+
+.mod-mult {
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--teal-deep);
+  font-variant-numeric: tabular-nums;   /* stops the panel twitching on toggle */
+}
+
+.mod-summary { font-size: 12px; color: var(--ink-soft); text-align: left; }
+
+.mod-cap-note {
+  margin: 0 0 10px;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #7A4A12;
+  background: linear-gradient(180deg, rgba(255,233,184,0.85), rgba(255,208,122,0.6));
+  border: 1px solid rgba(255,255,255,0.8);
+  text-align: left;
+}
+
+.mod-list { display: flex; flex-direction: column; gap: 7px; }
+
+.mod-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 13px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(206,234,245,0.24));
+  border: 1px solid rgba(255,255,255,0.72);
+  transition: transform 140ms cubic-bezier(0.2,0.9,0.3,1), box-shadow 180ms ease;
+}
+.mod-row:hover:not(.is-locked) { transform: translateY(-1px); }
+
+.mod-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mod-name { font-family: var(--font-display); font-size: 14px; color: var(--ink); }
+.mod-blurb { font-size: 11px; line-height: 1.35; color: var(--ink-soft); }
+
+.mod-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.mod-bonus {
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--green-shade);
+  font-variant-numeric: tabular-nums;
+}
+.mod-detail { font-size: 10px; color: var(--ink-soft); white-space: nowrap; }
+
+/* Active. Warm rather than green — this is a handicap that happens to pay, and
+   colouring it like a reward would misrepresent what the toggle does. */
+.mod-row.is-on {
+  background: linear-gradient(180deg, rgba(255,236,200,0.85), rgba(255,206,130,0.5));
+  border-color: rgba(240, 175, 60, 0.8);
+  box-shadow: 0 0 0 2px rgba(240,175,60,0.22), 0 4px 12px var(--shadow-1);
+}
+.mod-row.is-on .mod-bonus { color: #A85E12; }
+
+.mod-row.is-locked {
+  opacity: 0.5;
+  filter: saturate(0.5);
+  cursor: not-allowed;
+}
+
+.gel--modifiers {
+  background: linear-gradient(180deg,
+      rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.42) 46%,
+      rgba(255,214,150,0.42) 47%, rgba(240,180,110,0.6) 100%);
+}
+
+@media (max-width: 720px) {
+  .mod-mult { font-size: 25px; }
+  .mod-detail { display: none; }
+}
+
+
+/* ==========================================================================
+   ACCESSIBILITY
+   ==========================================================================
+   Two of the three preferences live in JS (flash intensity is applied per
+   flash, camera shake inside the render rig). This is the third.
+   ========================================================================== */
+
+.settings-group {
+  margin: 16px 0 2px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  text-align: left;
+}
+
+/* Larger text scales the root, so everything sized in rem or em follows
+   without each panel needing to know. Elements sized in px deliberately do not
+   move — the HUD gauges and the wisp preview are laid out against fixed
+   dimensions, and scaling those would break the layouts rather than help them.
+
+   16px is the browser default; 19px is roughly a 20% lift, which is the point
+   where body text becomes comfortable without the panels needing to reflow. */
+:root.is-large-text {
+  font-size: 19px;
+}
+
+:root.is-large-text .obj-text,
+:root.is-large-text .quest-text,
+:root.is-large-text .hud-label {
+  font-size: 12.5px;
+}
+
+:root.is-large-text .muted.small,
+:root.is-large-text .small {
+  font-size: 13px;
+}
+
+/* The one place a global lift is not enough: these are set in px because they
+   sit inside fixed-width chips, and they are also the numbers people most need
+   to read. */
+:root.is-large-text .col-set-count,
+:root.is-large-text .streak-day-amt,
+:root.is-large-text .mod-detail,
+:root.is-large-text .sp-reward-label {
+  font-size: 12px;
+}
+
+/* Motion-sensitivity: the OS-level preference disables the decorative
+   animations regardless of the in-game sliders, because someone who has set it
+   should not have to find a settings screen first. */
+@media (prefers-reduced-motion: reduce) {
+  .sp-reward.is-claimable,
+  .menu-badge,
+  .evo-node.is-goal {
+    animation: none !important;
+  }
+  .obj-tube > i,
+  .mod-row,
+  .evo-node {
+    transition: none !important;
+  }
+}
+
+/* ==========================================================================
+   LOADOUT PRESETS
+   ==========================================================================
+   A row of six slots under the shop's tab strip. Small, quiet, and always
+   visible — the point of a preset is that switching looks costs one tap, so
+   anything that hides them behind a menu defeats the feature.
+   ========================================================================== */
+
+.loadout-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 9px 0 2px;
+  padding: 0 2px;
+}
+
+.loadout-label {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.loadout-row {
+  display: flex;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.loadout-slot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  max-width: 108px;
+  padding: 4px 9px 4px 5px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  color: var(--ink);
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(206,234,245,0.3));
+  border: 1px solid rgba(255,255,255,0.75);
+  box-shadow: 0 2px 6px var(--shadow-1);
+  transition: transform 130ms cubic-bezier(0.2,0.9,0.3,1), box-shadow 160ms ease;
+}
+.loadout-slot:hover { transform: translateY(-1px); }
+
+.loadout-dot {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.9);
+  background: linear-gradient(135deg, #FFFFFF, #CFE6F2);
+}
+
+.loadout-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Empty slots are a plus sign and nothing else — an empty preset with a name
+   and a swatch reads as a broken preset rather than a free slot. */
+.loadout-slot.is-empty {
+  justify-content: center;
+  min-width: 30px;
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-soft);
+  background: rgba(255,255,255,0.28);
+  border-style: dashed;
+  border-color: rgba(255,255,255,0.6);
+  box-shadow: none;
+}
+
+.loadout-slot.is-active {
+  border-color: rgba(63, 209, 192, 0.85);
+  box-shadow: 0 0 0 2px rgba(63, 209, 192, 0.26), 0 2px 6px var(--shadow-1);
+}
+
+/* Contains something not owned — still usable, applies what it can. */
+.loadout-slot.is-partial { opacity: 0.72; }
+.loadout-slot.is-partial .loadout-dot { filter: saturate(0.4); }
+
+@media (max-width: 720px) {
+  .loadout-label { display: none; }
+  .loadout-slot { max-width: 84px; }
+}
+
+/* ==========================================================================
+   RECORDS
+   ==========================================================================
+   Grouped, two-column rows. The values are tabular-numeric and right-aligned
+   so the column reads as a column — thirty figures in a ragged edge is the
+   difference between a page people scan and a page people close.
+   ========================================================================== */
+
+.panel--stats-full {
+  width: min(680px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.rec-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin: 12px 0 14px;
+  text-align: left;
+}
+
+.rec-group {
+  padding: 10px 13px 11px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255,255,255,0.52), rgba(206,234,245,0.24));
+  border: 1px solid rgba(255,255,255,0.72);
+}
+
+.rec-group-title {
+  margin: 0 0 7px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--teal-deep);
+}
+
+.rec-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.45);
+}
+.rec-row:last-child { border-bottom: none; }
+
+.rec-label { font-size: 11.5px; color: var(--ink-soft); }
+
+.rec-value {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A dash means "not yet", and should read quieter than a real figure. */
+.rec-row.is-empty .rec-value { color: var(--ink-soft); font-weight: 400; }
+
+@media (max-width: 720px) {
+  .rec-body { grid-template-columns: 1fr; }
+}
+
+/* ==========================================================================
+   HUB REORGANISATION
+   ========================================================================== */
+
+/* The daily rewards week, now on its own screen rather than crammed into the
+   hub. Wider cells than the old inline version had room for. */
+.panel--streak-full { width: min(560px, 100%); }
+.panel--streak-full .streak-row { margin: 14px 0 12px; }
+.panel--streak-full .streak-day { padding: 10px 3px 9px; }
+/* Only the claim button inside the rewards screen stretches. The hub's
+   Rewards button shares the class for its colour and must stay a pill. */
+.panel--streak-full .gel--claim { width: 100%; }
+
+.panel--more { width: min(420px, 100%); }
+
+.more-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 14px 0 12px;
+}
+.more-grid .gel { width: 100%; }
+
+/* An unreached World is a destination, not a blank. It reads quieter than a
+   reached one but still looks like something rather than an absence. */
+.world-chip.is-unknown {
+  opacity: 0.5;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+}
+
+/* ==========================================================================
+   SEASON TIER SKIPS
+   ==========================================================================
+   Sits directly under the progress bar. That placement is the point: the
+   moment someone reads "1,400 / 2,143 to tier 24" is the moment buying the
+   rest is most appealing.
+   ========================================================================== */
+
+.sp-tier-buy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.sp-buy-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-right: 2px;
+}
+
+.sp-buy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.sp-buy .coin-icon { width: 12px; height: 12px; margin-left: 2px; }
+
+/* ==========================================================================
+   FLIGHT MODE PICKER
+   ==========================================================================
+   Sits directly above Fly. Deliberately small — it is a choice, not the
+   headline, and the headline is the button underneath it.
+   ========================================================================== */
+
+.mode-pick {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset;
+}
+
+.mode-btn {
+  padding: 5px 16px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.mode-btn:hover { color: var(--ink); }
+
+.mode-btn.is-on {
+  color: var(--ink);
+  background: linear-gradient(180deg, #FFFFFF, #D6EEF8);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 6px var(--shadow-1);
+}
+
+.mode-blurb {
+  margin: 8px 0 0;
+  max-width: 320px;
+  line-height: 1.4;
+}
+
+/* First-purchase offer. States the terms plainly — it is a real doubler on
+   whatever they buy first, and it disappears once genuinely used. */
+.st-firstbuy {
+  margin: 4px 0 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B4A00;
+  background: linear-gradient(180deg, rgba(255,240,196,0.9), rgba(255,214,120,0.65));
+  border: 1px solid rgba(255,255,255,0.85);
+}

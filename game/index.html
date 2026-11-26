@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#4FC3E8" />
+<meta name="description" content="AERODRIFT — an endless glide-and-collect game in the Frutiger Aero aesthetic." />
+<title>Aerodash — Play | Luke Sere &amp; Bryce Newton</title>
+
+<!--
+  The document itself must never be cached. Everything else here is versioned
+  or revalidated, but a stale index.html is uniquely bad: it pins the loader,
+  the import map and the screen markup to an old build, so a fix that shipped
+  hours ago simply never arrives and the bug "still happens". These meta tags
+  are weaker than real response headers (see README, "If something looks
+  broken") but they are the only lever a static file server always honours.
+-->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+
+<!--
+  ===========================================================================
+  DIAGNOSTIC CORE
+  ===========================================================================
+  This runs before the stylesheet, before the loader, before any module — and
+  that ordering is the whole point. The failures hardest to report remotely are
+  the ones that happen before the game exists: a blocked CDN, a syntax error in
+  a module, a browser missing a feature. Nothing inside js/ can observe those,
+  because js/ never runs.
+
+  So the always-on part lives here, in the one script guaranteed to execute:
+  a console ring buffer, global error capture, a boot-stage timeline, and a
+  report the player can copy from a panel. js/diagnostics.js later registers a
+  richer provider for game state, but the system works without it.
+
+  Deliberately ES5-flavoured and dependency-free: if the browser is old enough
+  or broken enough that modern syntax fails, this still has to run.
+  ========================================================================== -->
+<script>
+(function () {
+  var MAX_LOGS = 60;      // kept in memory
+  var REPORT_LOGS = 20;   // shown in the report
+
+  var D = {
+    t0: Date.now(),
+    startedAt: new Date().toISOString(),
+    stage: 'html',
+    mirror: null,
+    mirrorAttempts: [],
+    logs: [],
+    errors: [],
+    marks: [],
+    storage: 'unknown',
+    /** Set by js/diagnostics.js once the module graph is alive. */
+    provider: null,
+    opened: false,
+    /** Errors attributed to browser extensions rather than to the game. */
+    foreignCount: 0,
+    /** Latched once a crash has taken over the screen; never auto-opens twice.
+        Without it a throw inside the render loop re-opens the panel every
+        frame and the player physically cannot close it. */
+    autoOpened: false,
+  };
+  window.__AERO_DIAG = D;
+
+  function now() { return Date.now() - D.t0; }
+
+  /** Record a boot milestone, so a stalled boot shows where it stalled. */
+  D.mark = function (stage, detail) {
+    D.stage = stage;
+    D.marks.push({ t: now(), stage: stage, detail: detail || '' });
+  };
+
+  /* --- Console ring buffer ---------------------------------------------
+     Wrapping console is the only way to get the last few lines out of a
+     player who does not have devtools open — which is every player. The
+     original method is always called, so behaviour is unchanged. */
+  ['log', 'info', 'warn', 'error', 'debug'].forEach(function (level) {
+    var original = console[level];
+    if (typeof original !== 'function') return;
+    console[level] = function () {
+      try {
+        var parts = [];
+        for (var i = 0; i < arguments.length; i++) {
+          var a = arguments[i];
+          if (a instanceof Error) parts.push(a.message);
+          else if (typeof a === 'object' && a !== null) {
+            try { parts.push(JSON.stringify(a).slice(0, 300)); }
+            catch (e) { parts.push('[object]'); }
+          } else parts.push(String(a));
+        }
+        D.logs.push({ t: now(), level: level, text: parts.join(' ').slice(0, 400) });
+        if (D.logs.length > MAX_LOGS) D.logs.shift();
+      } catch (e) { /* logging must never be the thing that breaks */ }
+      return original.apply(console, arguments);
+    };
+  });
+
+  /* --- Quiet badge -------------------------------------------------------
+     For things the player should know about that are emphatically *not*
+     worth stealing the screen for: an extension blocking localStorage means
+     progress will not save, which is worth one small pill in the corner and
+     nothing more.
+
+     Declared before its first caller on purpose — `var` hoists as undefined,
+     so a later `var pendingBadge = ''` would silently erase a badge that the
+     storage probe had already asked for. */
+  var pendingBadge = '';
+  function setBadge(text) {
+    try {
+      pendingBadge = text;
+      var b = document.getElementById('diag-badge');
+      if (!b) return;                     // markup not parsed yet; flushed below
+      b.textContent = text;
+      b.hidden = false;
+    } catch (e) { /* the badge is a nicety; never let it throw */ }
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    if (pendingBadge) setBadge(pendingBadge);
+  });
+
+  function noteInterference() {
+    // Deliberately silent. A misbehaving extension is report material, not a
+    // reason to interrupt someone who is flying.
+  }
+
+  /* --- Storage reachability -------------------------------------------
+     Probed once, here, because a private-mode browser can throw on the very
+     first touch and the game needs to know that happened even if it recovers. */
+  try {
+    var probeKey = '__aero_probe__';
+    localStorage.setItem(probeKey, '1');
+    localStorage.removeItem(probeKey);
+    D.storage = 'ok';
+  } catch (e) {
+    D.storage = 'blocked: ' + (e && e.name ? e.name : 'unknown');
+    // This one *is* worth telling the player about: the game plays fine but
+    // nothing they earn will survive the tab closing, and finding that out
+    // after a two-hour session is the worst possible time to learn it.
+    setBadge('Progress won’t save here — tap for details');
+  }
+
+  /* --- Whose error is this? ---------------------------------------------
+     A page shares its error channel with every browser extension injected
+     into it, and those extensions throw constantly — a password manager
+     probing localStorage, a shopping helper reading the DOM. Treating that
+     traffic as "the game crashed" is worse than not reporting at all: it
+     trains the player to dismiss the one panel that is supposed to mean
+     something. So every error is attributed before it is acted on.
+
+     Foreign errors are still *recorded* — an extension that breaks
+     localStorage really does break saving, and that belongs in the report —
+     they simply never take over the screen. */
+  var EXT_RE = /(^|[\s(@])(chrome|moz|safari|safari-web|opera|edge)-extension:\/\//i;
+
+  function foreignSource(text) {
+    if (!text) return false;
+    var s = String(text);
+    if (EXT_RE.test(s)) return true;
+    if (s.indexOf('extension://') >= 0) return true;
+    // Safari masks extension frames rather than naming them.
+    if (s.indexOf('webkit-masked-url:') >= 0) return true;
+    return false;
+  }
+
+  /**
+   * True when this error cannot be blamed on the game.
+   * `filename`/`stack` are the evidence; an opaque cross-origin "Script error."
+   * with neither is, in practice, always an injected third-party script.
+   */
+  function isForeign(message, filename, stack) {
+    if (foreignSource(filename) || foreignSource(stack)) return true;
+    if (!filename && !stack && /^script error\.?$/i.test(String(message || '').trim())) return true;
+    return false;
+  }
+
+  function record(kind, message, extra, opts) {
+    try {
+      opts = opts || {};
+      var entry = {
+        t: now(), kind: kind, stage: D.stage,
+        message: String(message).slice(0, 500),
+        extra: extra ? String(extra).slice(0, 900) : '',
+        foreign: !!opts.foreign,
+      };
+      D.errors.push(entry);
+      if (D.errors.length > 16) D.errors.shift();
+      if (entry.foreign) { D.foreignCount++; noteInterference(); return; }
+      D.open(true);
+    } catch (e) { /* never throw from the error handler */ }
+  }
+
+  window.addEventListener('error', function (e) {
+    // Resource load failures (script/img/link) have no `error` object; the
+    // target tells us what failed to load, which is exactly what we need for
+    // "the CDN is blocked" cases.
+    if (e && e.target && e.target !== window && e.target.tagName) {
+      var url = e.target.src || e.target.href || '';
+      record('resource', e.target.tagName + ' failed to load', url, { foreign: foreignSource(url) });
+      return;
+    }
+    var msg = (e && e.message) || 'unknown error';
+    var file = (e && e.filename) || '';
+    var stack = (e && e.error && e.error.stack) || '';
+    record('error', msg, stack || file, { foreign: isForeign(msg, file, stack) });
+  }, true);
+
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    var msg = (r && r.message) || String(r);
+    var stack = (r && r.stack) || '';
+    record('unhandledrejection', msg, stack, { foreign: isForeign(msg, '', stack) });
+  });
+
+  /* --- Report ----------------------------------------------------------- */
+  function line(k, v) { return k + ': ' + v; }
+
+  function baseSections() {
+    var nav = window.navigator || {};
+    var out = [];
+
+    out.push('AERODRIFT diagnostic report');
+    out.push('generated: ' + new Date().toISOString());
+    out.push('page opened: ' + D.startedAt + '  (+' + now() + 'ms)');
+    out.push('');
+
+    out.push('[build]');
+    out.push(line('build', (window.__AERO_BUILD_ID) || 'unknown (modules never loaded)'));
+    out.push(line('page url', location.href));
+    out.push(line('index.html last modified', document.lastModified));
+    out.push('');
+
+    out.push('[boot]');
+    out.push(line('stage reached', D.stage));
+    out.push(line('mirror used', D.mirror || 'none'));
+    if (D.mirrorAttempts.length) out.push(line('mirror attempts', D.mirrorAttempts.join(' | ')));
+    D.marks.forEach(function (m) {
+      out.push('  +' + m.t + 'ms  ' + m.stage + (m.detail ? '  (' + m.detail + ')' : ''));
+    });
+    out.push('');
+
+    out.push('[environment]');
+    out.push(line('userAgent', nav.userAgent || '?'));
+    out.push(line('platform', (nav.userAgentData && nav.userAgentData.platform) || nav.platform || '?'));
+    out.push(line('language', nav.language || '?'));
+    out.push(line('viewport', window.innerWidth + 'x' + window.innerHeight + ' @dpr' + (window.devicePixelRatio || 1)));
+    out.push(line('touch', ('ontouchstart' in window) || nav.maxTouchPoints > 0));
+    out.push(line('cores', nav.hardwareConcurrency || '?'));
+    out.push(line('memory(GB)', nav.deviceMemory || '?'));
+    out.push(line('online', nav.onLine));
+    out.push(line('localStorage', D.storage));
+    out.push(line('webgl', webglInfo()));
+    out.push('');
+
+    out.push('[cache]');
+    cacheInfo().forEach(function (l) { out.push('  ' + l); });
+    out.push('');
+
+    // Split by attribution. Mixing an extension's noise into the same list as
+    // a real game error is how a report stops being readable at a glance.
+    var mine = [], theirs = [];
+    D.errors.forEach(function (e) { (e.foreign ? theirs : mine).push(e); });
+
+    function dumpErrors(label, list) {
+      out.push(label + ' (' + list.length + ')');
+      list.forEach(function (e) {
+        out.push('  +' + e.t + 'ms [' + e.kind + ' @' + e.stage + '] ' + e.message);
+        if (e.extra) {
+          e.extra.split('\n').slice(0, 6).forEach(function (s) { out.push('      ' + s.trim()); });
+        }
+      });
+      out.push('');
+    }
+
+    if (mine.length) dumpErrors('[errors]', mine);
+    if (theirs.length) {
+      out.push('[browser extensions]');
+      out.push('  ' + theirs.length + ' error(s) came from an injected extension, not from the game.');
+      if (D.storage.indexOf('blocked') === 0) {
+        out.push('  localStorage is also blocked — an extension is very likely the cause,');
+        out.push('  and it is why progress does not persist in this browser profile.');
+      }
+      out.push('');
+      dumpErrors('[extension errors]', theirs);
+    }
+
+    return out;
+  }
+
+  function webglInfo() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl2') || c.getContext('webgl');
+      if (!gl) return 'UNAVAILABLE (no WebGL context)';
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      var vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      var ver = (c.getContext('webgl2') ? 'webgl2' : 'webgl1');
+      return ver + ' | ' + vendor + ' | ' + renderer;
+    } catch (e) {
+      return 'error probing: ' + e.message;
+    }
+  }
+
+  /**
+   * Whether the browser served our own files from cache. This is the single
+   * most useful line in the report when a fixed bug appears to persist.
+   */
+  function cacheInfo() {
+    var out = [];
+    try {
+      if (!performance || !performance.getEntriesByType) return ['unavailable'];
+      var entries = performance.getEntriesByType('resource');
+      var interesting = entries.filter(function (e) {
+        return /\/(index\.html|main\.js|style\.css)/.test(e.name) || /three/.test(e.name);
+      });
+      if (!interesting.length) out.push('no matching resource timings');
+      interesting.slice(0, 8).forEach(function (e) {
+        var cached = e.transferSize === 0 && e.decodedBodySize > 0;
+        out.push((cached ? 'FROM CACHE ' : 'network    ') + shortUrl(e.name) +
+                 '  (' + Math.round(e.duration) + 'ms, ' + e.decodedBodySize + 'B)');
+      });
+      if (window.navigator.serviceWorker) {
+        out.push('serviceWorker controller: ' +
+          (navigator.serviceWorker.controller ? 'PRESENT — may be serving an old build' : 'none'));
+      }
+    } catch (e) {
+      out.push('error: ' + e.message);
+    }
+    return out;
+  }
+
+  function shortUrl(u) {
+    try { var p = new URL(u); return p.host + p.pathname; } catch (e) { return String(u); }
+  }
+
+  D.buildReport = function () {
+    var parts = baseSections();
+    // The module layer contributes game state when it is alive. It must never
+    // be able to stop the base report from being produced.
+    if (typeof D.provider === 'function') {
+      try {
+        var extra = D.provider();
+        if (extra) parts = parts.concat(String(extra).split('\n'));
+      } catch (e) {
+        parts.push('[game state] provider threw: ' + e.message);
+      }
+    } else {
+      parts.push('[game state]');
+      parts.push('  unavailable — the game module never finished loading');
+    }
+
+    parts.push('');
+    parts.push('[console] last ' + REPORT_LOGS + ' lines');
+    var tail = D.logs.slice(-REPORT_LOGS);
+    if (!tail.length) parts.push('  (nothing logged)');
+    tail.forEach(function (l) {
+      parts.push('  +' + l.t + 'ms ' + l.level.toUpperCase() + ' ' + l.text);
+    });
+
+    return parts.join('\n');
+  };
+
+  /* --- Panel ------------------------------------------------------------ */
+  D.open = function (isCrash) {
+    try {
+      var panel = document.getElementById('screen-diag');
+      if (!panel) return;                 // markup not parsed yet
+      if (isCrash) {
+        if (D.autoOpened) return;         // one crash panel per page load
+        D.autoOpened = true;
+      }
+      D.opened = true;
+
+      var title = document.getElementById('diag-title');
+      var lead = document.getElementById('diag-lead');
+      if (title) title.textContent = isCrash ? 'Something went wrong' : 'Report an issue';
+      if (lead) {
+        lead.textContent = isCrash
+          ? 'The game hit an error. Copy the report below and send it over — it says exactly what broke, and no personal data is in it.'
+          : 'Copy the report below and send it over. It describes your browser, this build and what the game was doing — nothing personal.';
+      }
+
+      var pre = document.getElementById('diag-report');
+      if (pre) pre.textContent = D.buildReport();
+
+      var say = document.getElementById('diag-copied');
+      if (say) say.textContent = '';
+
+      document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
+      panel.classList.add('is-active');
+      document.body.classList.remove('is-photo');
+    } catch (e) { /* the diagnostics panel must never itself crash */ }
+  };
+
+  /** Copy with a fallback: the async clipboard API needs a secure context,
+      and a LAN address served over plain http is not one. */
+  D.copy = function () {
+    var pre = document.getElementById('diag-report');
+    var say = document.getElementById('diag-copied');
+    var text = pre ? pre.textContent : D.buildReport();
+    var done = function (ok) {
+      if (say) say.textContent = ok ? 'Copied to clipboard.' : 'Copy failed — select the text above and copy manually.';
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallbackCopy(pre)); });
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    done(fallbackCopy(pre));
+  };
+
+  function fallbackCopy(pre) {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(pre);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      var ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest && e.target.closest('[data-diag]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-diag');
+    if (act === 'open') { D.open(false); return; }
+    if (act === 'copy') D.copy();
+    else if (act === 'reload') location.reload();
+    else if (act === 'close') {
+      var panel = document.getElementById('screen-diag');
+      if (panel) panel.classList.remove('is-active');
+      D.opened = false;
+      // The report stays one tap away rather than being lost on dismiss.
+      if (D.autoOpened) setBadge('Error report ready — tap to copy');
+      // Hand control back to the game if it is alive; otherwise show the hub.
+      if (window.__aerodrift && window.__aerodrift.ui) {
+        window.__aerodrift.ui.show(window.__aerodrift.probe().state === 'playing' ? 'pause' : 'hub');
+        if (window.__aerodrift.probe().state === 'playing') window.__aerodrift.pauseRun();
+      }
+    }
+  });
+
+  D.mark('html');
+})();
+</script>
+
+<!-- Rounded, friendly sans. If the CDN is unreachable the system rounded stack in style.css takes over. -->
+
+<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="css/showcase.css" />
+
+<!-- Warm up both mirrors so whichever one answers is already connected. -->
+</head>
+<body>
+
+<!-- The WebGL canvas lives here; every screen below is a DOM overlay on top of it. -->
+<div id="stage">
+  <canvas id="gl"></canvas>
+
+  <!-- Slow-drifting bokeh discs, pure CSS, drawn over the 3D scene for that Aero "lens" feel. -->
+  <div id="bokeh" aria-hidden="true"></div>
+  <!-- Full-screen white flash used for boost / checkpoint / portal punctuation. -->
+  <div id="flash" aria-hidden="true"></div>
+  <!-- Floating "+120" score popups get appended here. -->
+  <div id="popups" aria-hidden="true"></div>
+</div>
+
+<!-- ============================= BOOT / LOADING ============================= -->
+<section id="screen-boot" class="screen is-active">
+  <div class="panel panel--tight boot-panel">
+    <div class="boot-orb" aria-hidden="true"></div>
+    <h2 class="panel-title">Warming up the sky…</h2>
+    <p class="muted" id="boot-note">Loading the bundled game engine</p>
+  </div>
+</section>
+
+<!-- Shown only if the module graph never boots (offline / CDN blocked). -->
+<section id="screen-offline" class="screen">
+  <div class="panel">
+    <h2 class="panel-title">The game could not start</h2>
+    <p>
+      Try a current browser with WebGL2 enabled. If you are using the downloaded backup, launch it with Launch-Aerodash.command instead of double-clicking this HTML file.
+    </p>
+    <p class="muted small">
+      Open <code>Open-Aerodash.html</code> from the release folder, or use the optional local launcher. The graphics engine is included with this build.
+    </p>
+    <div class="btn-row">
+      <button class="gel" data-action="reload">Reload</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================= HUB =================================== -->
+<section id="screen-hub" class="screen">
+  <div class="title-wrap">
+    <h1 class="logo"><span class="logo-text" data-text="AERODASH">AERODASH</span></h1>
+    <p class="tagline">AERODRIFT · CEHC Showcase · Luke Sere &amp; Bryce Newton</p>
+
+    <!-- Wallet + account level -->
+    <div class="wallet" id="wallet">
+      <div class="coin coin--droplet" title="Droplets">
+        <i class="coin-icon icon-droplet" aria-hidden="true"></i>
+        <span id="wal-droplets">0</span>
+      </div>
+      <div class="coin coin--prism" title="Prisms">
+        <i class="coin-icon icon-prism" aria-hidden="true"></i>
+        <span id="wal-prisms">0</span>
+      </div>
+      <div class="coin coin--level" title="Account level">
+        <span class="lvl-badge" id="wal-level">1</span>
+        <div class="xp-tube"><i id="wal-xp"></i></div>
+      </div>
+    </div>
+
+    <div class="btn-row btn-row--stack">
+      <div class="mode-pick" id="mode-pick" role="radiogroup" aria-label="Flight mode"></div>
+      <button class="gel gel--primary gel--big" data-action="play">Start flight</button>
+      <p class="mode-blurb muted small" id="mode-blurb"></p>
+      <!--
+        Four rows, grouped by what the player is doing: the daily loop, the
+        build, the collection. Everything low-frequency lives behind More, so
+        the hub stays a menu rather than a control panel.
+      -->
+      <div class="btn-row">
+        <button class="gel gel--sm" data-action="daily" id="btn-daily">Daily</button>
+        <button class="gel gel--sm gel--season" data-action="season">Season Pass</button>
+        <button class="gel gel--sm gel--store" data-action="store">Store</button>
+      </div>
+      <div class="btn-row">
+        <button class="gel gel--sm" data-action="shop">Shop</button>
+        <button class="gel gel--sm" data-action="upgrades">Upgrades</button>
+        <button class="gel gel--sm gel--evolve" data-action="evolution">Evolve</button>
+      </div>
+      <div class="btn-row">
+        <button class="gel gel--sm gel--claim" data-action="streak">Rewards</button>
+        <button class="gel gel--sm gel--collection" data-action="collection">Collection</button>
+        <button class="gel gel--sm" data-action="stats">Records</button>
+      </div>
+      <div class="btn-row">
+        <button class="gel gel--sm" data-action="more">More</button>
+      </div>
+    </div>
+
+
+    <div class="panel panel--quests" id="title-quests">
+      <div class="quests-head">
+        <h3 class="panel-subtitle">Today's Objectives</h3>
+        <button class="gel gel--tiny" id="quest-reroll">Reroll</button>
+      </div>
+      <div class="quest-list" id="quest-list"></div>
+    </div>
+
+
+    <div class="panel panel--worlds">
+      <h3 class="panel-subtitle">Worlds Reached</h3>
+      <div class="world-row" id="world-row"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== HOW TO PLAY ============================== -->
+<section id="screen-how" class="screen screen--modal">
+  <div class="panel">
+    <h2 class="panel-title">How to Play</h2>
+    <ul class="how-list">
+      <li><b>Steer</b> — move the mouse, or use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrow keys. On touch, drag anywhere.</li>
+      <li><b>Boost</b> — hold <kbd>Space</kbd>, or hold the on-screen boost pad. Orbs refill the meter.</li>
+      <li><b>Collect</b> — light orbs score points. Glass rings score big and add <b>+1 combo</b>.</li>
+      <li><b>Ride streams</b> — the glowing ribbons grant speed, bonus score and a multiplier.</li>
+      <li><b>Checkpoint arches</b> span the whole corridor and can't be missed. Every one pays out; every fourth adds a permanent run multiplier.</li>
+      <li><b>Portals</b> close a World and open the next. Thread the aperture for a bonus.</li>
+      <li><b>Shield</b> — clipping a cloud or coral costs one pip and your combo. Clean flying earns pips back. Only a contact with <b>no shield left</b> ends a run.</li>
+      <li><b>Pause</b> — <kbd>Esc</kbd> at any time. <b>Photo mode</b> — <kbd>P</kbd> while paused.</li>
+    </ul>
+    <p class="muted small">There is no timer. A careful pilot can fly forever.</p>
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Got it</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================= HUD =================================== -->
+<div id="hud" aria-hidden="true">
+  <div class="hud-top">
+    <div class="glass-chip hud-score">
+      <span class="hud-label">Score</span>
+      <span class="hud-value" id="hud-score">0</span>
+      <span class="hud-combo" id="hud-combo">×1</span>
+      <span class="hud-mult" id="hud-mult" hidden>+0</span>
+    </div>
+
+    <div class="glass-chip hud-dist">
+      <span class="hud-label">Distance</span>
+      <span class="hud-value" id="hud-distance">0 m</span>
+      <span class="hud-sub" id="hud-next">Portal in 2,400 m</span>
+      <div class="progress-tube" aria-hidden="true"><i id="hud-progress"></i></div>
+    </div>
+  </div>
+
+  <!-- Shield pips + run droplets -->
+  <div class="hud-left">
+    <div class="glass-chip hud-shield" id="hud-shield">
+      <span class="hud-label">Integrity</span>
+      <div class="pip-row" id="pip-row"></div>
+      <div class="regen-tube" aria-hidden="true"><i id="regen-fill"></i></div>
+    </div>
+    <div class="glass-chip hud-drops">
+      <i class="coin-icon icon-droplet" aria-hidden="true"></i>
+      <span id="hud-droplets">0</span>
+    </div>
+    <div class="glass-chip hud-ghost" id="hud-ghost" hidden>
+      <span class="hud-label">Ghost</span>
+      <span class="hud-value" id="ghost-delta">—</span>
+    </div>
+    <div class="glass-chip hud-objectives" id="hud-objectives" hidden>
+      <span class="hud-label">Objectives</span>
+      <div class="obj-list" id="obj-list"></div>
+    </div>
+  </div>
+
+  <div class="hud-biome" id="hud-biome"></div>
+  <div class="hud-toast" id="hud-toast"></div>
+
+  <div class="hud-bottom">
+    <div class="boost-gauge" id="boost-gauge">
+      <span class="hud-label">Boost</span>
+      <div class="gauge-tube"><i id="boost-fill"></i></div>
+    </div>
+  </div>
+
+  <!-- Touch-only: appears when a touch device is detected. -->
+  <button id="boost-pad" class="boost-pad" aria-label="Boost">BOOST</button>
+  <button id="pause-btn" class="icon-btn" aria-label="Pause">II</button>
+</div>
+
+<!-- ================================ PAUSE ================================== -->
+<section id="screen-pause" class="screen screen--modal">
+  <div class="panel">
+    <h2 class="panel-title">Paused</h2>
+    <div class="btn-row btn-row--stack">
+      <button class="gel gel--primary gel--big" data-action="resume">Resume</button>
+      <div class="btn-row">
+        <button class="gel gel--sm" data-action="photo">Photo Mode</button>
+        <button class="gel gel--sm" data-action="settings">Settings</button>
+        <button class="gel gel--sm" data-action="end-run">End Run</button>
+      </div>
+    </div>
+    <p class="muted small" id="pause-seed">Seed —</p>
+  </div>
+</section>
+
+<!-- =============================== RESULTS ================================= -->
+<section id="screen-results" class="screen">
+  <div class="panel panel--results">
+    <h2 class="panel-title" id="res-title">Run Complete</h2>
+    <p class="res-cause muted" id="res-cause"></p>
+    <div class="result-badge" id="result-badge" hidden>New Best!</div>
+
+    <div class="result-grid">
+      <div class="stat stat--big"><span class="stat-label">Score</span><span class="stat-value" id="res-score">0</span></div>
+      <div class="stat"><span class="stat-label">Distance</span><span class="stat-value" id="res-distance">0 m</span></div>
+      <div class="stat"><span class="stat-label">Best Combo</span><span class="stat-value" id="res-combo">×1</span></div>
+      <div class="stat"><span class="stat-label">Worlds</span><span class="stat-value" id="res-worlds">1</span></div>
+    </div>
+
+    <div class="earn-row">
+      <div class="earn"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="res-droplets">0</span></div>
+      <div class="earn" id="res-prism-wrap" hidden><i class="coin-icon icon-prism" aria-hidden="true"></i><span id="res-prisms">0</span></div>
+      <div class="earn earn--xp"><span class="earn-label">XP</span><span id="res-xp">0</span></div>
+    </div>
+
+    <div class="levelup" id="res-levelup" hidden></div>
+    <div id="res-unlocks" class="unlock-row"></div>
+
+    <p class="muted small" id="res-seed">Seed —</p>
+
+    <div class="btn-row">
+      <button class="gel gel--primary gel--big" data-action="play">Fly Again</button>
+      <button class="gel" data-action="home">Hub</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================= SHOP ================================== -->
+<section id="screen-shop" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Shop</h2>
+    <div class="wallet wallet--inline" id="shop-wallet">
+      <div class="coin coin--droplet"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="shop-droplets">0</span></div>
+      <div class="coin coin--prism"><i class="coin-icon icon-prism" aria-hidden="true"></i><span id="shop-prisms">0</span></div>
+    </div>
+
+    <div class="seg" id="shop-tabs" role="radiogroup" aria-label="Cosmetic type">
+      <button class="seg-btn is-on" data-tab="skin">Wisp</button>
+      <button class="seg-btn" data-tab="trail">Trails</button>
+      <button class="seg-btn" data-tab="aura">Auras</button>
+      <button class="seg-btn" data-tab="tint">Tints</button>
+    </div>
+
+    <div class="loadout-bar">
+      <span class="loadout-label">Presets</span>
+      <div class="loadout-row" id="loadout-row"></div>
+    </div>
+
+    <!--
+      The preview is not decoration. Before it existed, the only place a player
+      could see the thing they were buying was 13 metres ahead of a chase camera
+      as a bloom-blown dot — so a card's CSS gradient was a *guess* at the item
+      rather than the item. This renders the same wisp rig the game flies.
+    -->
+    <div class="shop-body">
+      <div class="wisp-stage">
+        <canvas id="wisp-preview" width="320" height="320" aria-hidden="true"></canvas>
+        <div class="wisp-caption">
+          <strong id="wisp-name">Dew Drop</strong>
+          <span class="muted small" id="wisp-blurb"></span>
+        </div>
+      </div>
+      <div class="card-grid" id="shop-grid"></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== UPGRADES ================================ -->
+<section id="screen-upgrades" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Upgrades</h2>
+    <div class="wallet wallet--inline">
+      <div class="coin coin--droplet"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="upg-droplets">0</span></div>
+      <div class="coin coin--level"><span class="lvl-badge" id="upg-level">1</span></div>
+    </div>
+
+    <div class="card-grid" id="upgrade-grid"></div>
+
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= DAILY REWARDS ============================ -->
+<section id="screen-streak" class="screen screen--modal">
+  <div class="panel panel--streak-full">
+    <h2 class="panel-title">Daily Rewards</h2>
+    <p class="muted small" id="streak-count">Day 1</p>
+    <div class="streak-row" id="streak-row"></div>
+    <button class="gel gel--primary gel--claim" id="streak-claim">Claim</button>
+    <div class="btn-row">
+      <button class="gel gel--sm" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================= MORE ================================= -->
+<section id="screen-more" class="screen screen--modal">
+  <div class="panel panel--more">
+    <h2 class="panel-title">More</h2>
+    <div class="more-grid">
+      <button class="gel gel--sm" data-action="rebirth" id="btn-rebirth">Rebirth</button>
+      <button class="gel gel--sm" data-action="leaderboard">Leaderboard</button>
+      <button class="gel gel--sm" data-action="achievements">Log</button>
+      <button class="gel gel--sm" data-action="how">How to Play</button>
+      <button class="gel gel--sm" data-action="settings">Settings</button>
+    </div>
+    <div class="btn-row">
+      <button class="gel gel--sm" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ RECORDS =============================== -->
+<section id="screen-stats" class="screen screen--modal">
+  <div class="panel panel--stats-full">
+    <h2 class="panel-title">Records</h2>
+    <div class="rec-body" id="stats-body"></div>
+    <div class="btn-row">
+      <button class="gel gel--sm" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== COLLECTION ============================== -->
+<section id="screen-collection" class="screen screen--modal">
+  <div class="panel panel--collection">
+    <h2 class="panel-title">Collection</h2>
+
+    <div class="col-overall">
+      <div class="col-overall-figure"><b id="col-have">0</b><span class="muted">/</span><span id="col-total">0</span></div>
+      <div class="col-overall-bar"><div class="progress-tube"><i id="col-bar"></i></div></div>
+      <span class="muted small" id="col-pct">0%</span>
+    </div>
+
+    <div class="col-sets" id="col-sets"></div>
+
+    <div class="btn-row btn-row--split">
+      <button class="gel gel--sm" id="col-claim-all">Claim All</button>
+      <button class="gel gel--sm" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================================ STORE ================================= -->
+<section id="screen-store" class="screen screen--modal">
+  <div class="panel panel--store">
+    <div class="sp-badge" title="No payment rail is connected">PREVIEW — no payment connected</div>
+
+    <h2 class="panel-title">Store</h2>
+
+    <div class="wallet-row">
+      <span class="wallet-chip"><i class="coin-icon icon-droplet"></i><b id="store-droplets">0</b></span>
+      <span class="wallet-chip"><i class="coin-icon icon-prism"></i><b id="store-prisms">0</b></span>
+    </div>
+
+    <p class="st-firstbuy is-hidden" id="store-first-buy"></p>
+
+    <div class="st-section">
+      <div class="st-section-head"><h3 class="st-section-title">Season Pass</h3></div>
+      <div class="st-row" id="store-passes"></div>
+    </div>
+
+    <div class="st-section">
+      <div class="st-section-head"><h3 class="st-section-title">Skip Ahead</h3></div>
+      <div class="st-row" id="store-tier-packs"></div>
+    </div>
+
+    <div class="st-section">
+      <div class="st-section-head">
+        <h3 class="st-section-title">Featured</h3>
+        <span class="muted small" id="store-rotation"></span>
+      </div>
+      <div class="st-row" id="store-featured"></div>
+    </div>
+
+    <div class="st-section">
+      <div class="st-section-head"><h3 class="st-section-title">Bundles</h3></div>
+      <div class="st-row" id="store-bundles"></div>
+    </div>
+
+    <div class="st-section">
+      <div class="st-section-head"><h3 class="st-section-title">Droplets</h3></div>
+      <div class="st-row" id="store-droplet-packs"></div>
+    </div>
+
+    <div class="st-section">
+      <div class="st-section-head"><h3 class="st-section-title">Prisms</h3></div>
+      <div class="st-row" id="store-prism-packs"></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="gel gel--sm" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= SEASON PASS ============================== -->
+<section id="screen-season" class="screen screen--modal">
+  <div class="panel panel--season">
+    <div class="sp-badge" title="No payment rail is connected">PREVIEW — no payment connected</div>
+
+    <h2 class="panel-title" id="season-name">Season 1</h2>
+    <p class="muted small" id="season-blurb"></p>
+
+    <div class="sp-head">
+      <div class="sp-tier-badge"><span class="muted small">TIER</span><b id="season-tier">0</b></div>
+      <div class="sp-progress">
+        <div class="progress-tube"><i id="season-bar"></i></div>
+        <span class="muted small" id="season-xp-label"></span>
+      </div>
+      <span class="sp-premium-tag is-hidden" id="season-premium-tag">PREMIUM</span>
+    </div>
+
+    <div class="sp-tier-buy" id="season-tier-buy"></div>
+
+    <div class="sp-track" id="season-track"></div>
+
+    <div class="btn-row btn-row--split">
+      <button class="gel gel--sm" id="season-claim-all">Claim All</button>
+      <span class="btn-row">
+        <button class="gel gel--primary gel--buy" id="season-unlock">Unlock Premium</button>
+        <button class="gel gel--sm" data-action="close-modal">Back</button>
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== EVOLUTION =============================== -->
+<section id="screen-evolution" class="screen screen--modal">
+  <div class="panel panel--tree">
+    <h2 class="panel-title">Evolution</h2>
+    <p class="muted small">Grow the wisp down a branch. Droplet nodes reset on Rebirth — Forms are forever.</p>
+
+    <div class="wallet wallet--inline">
+      <div class="coin coin--droplet"><i class="coin-icon icon-droplet" aria-hidden="true"></i><span id="evo-droplets">0</span></div>
+      <div class="coin coin--prism"><i class="coin-icon icon-prism" aria-hidden="true"></i><span id="evo-prisms">0</span></div>
+      <div class="coin coin--level"><span class="lvl-badge" id="evo-level">1</span></div>
+    </div>
+
+    <div class="evo-summary" id="evo-summary"></div>
+
+    <div class="evo-tree" id="evo-tree"></div>
+
+    <div class="btn-row btn-row--split">
+      <span class="muted small" id="evo-respec-note">Respec refunds every Droplet node in full.</span>
+      <span class="btn-row">
+        <button class="gel gel--sm" id="evo-respec">Respec</button>
+        <button class="gel gel--primary" data-action="close-modal">Back</button>
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== REBIRTH ================================= -->
+<section id="screen-rebirth" class="screen screen--modal">
+  <div class="panel panel--rebirth">
+    <h2 class="panel-title">Rebirth</h2>
+    <p class="muted small">Trade this cycle for Prisms and a permanent multiplier.</p>
+
+    <div class="rebirth-meter">
+      <div class="progress-tube progress-tube--tall"><i id="reb-progress"></i></div>
+      <p class="muted small" id="reb-progress-label">0 / 10,000 m this cycle</p>
+    </div>
+
+    <div class="reb-grid">
+      <div class="reb-col reb-col--keep">
+        <h3 class="panel-subtitle">You keep</h3>
+        <ul id="reb-keeps"></ul>
+      </div>
+      <div class="reb-col reb-col--reset">
+        <h3 class="panel-subtitle">You reset</h3>
+        <ul id="reb-resets"></ul>
+      </div>
+    </div>
+
+    <div class="reb-payout">
+      <i class="coin-icon icon-prism" aria-hidden="true"></i>
+      <span id="reb-prisms">0</span>
+      <span class="muted small" id="reb-mult">×1.00 → ×1.12 score</span>
+    </div>
+
+    <div class="btn-row">
+      <button class="gel gel--gold gel--big" id="reb-confirm" data-action="do-rebirth">Ascend</button>
+      <button class="gel" data-action="close-modal">Not yet</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= LEADERBOARD =============================== -->
+<section id="screen-leaderboard" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Leaderboard</h2>
+
+    <div class="seg" id="board-tabs" role="radiogroup" aria-label="Board">
+      <button class="seg-btn is-on" data-board="global">Global</button>
+      <button class="seg-btn" data-board="daily">Daily</button>
+    </div>
+
+    <div class="net-state" id="net-state">Checking for a server…</div>
+    <ol class="board" id="board-list"></ol>
+
+    <label class="field">
+      <span class="field-label">Display name</span>
+      <input type="text" id="set-name" class="text-input" maxlength="18" placeholder="Anonymous Drifter" />
+    </label>
+    <p class="muted small">
+      Leaderboards and ghosts are optional. With no server running, everything else
+      works exactly the same — all progress is stored locally.
+    </p>
+
+    <div class="btn-row">
+      <button class="gel" data-action="refresh-board">Refresh</button>
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ACHIEVEMENTS =============================== -->
+<section id="screen-achievements" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title">Milestone Log</h2>
+    <p class="muted small" id="ach-progress">0 / 0 earned</p>
+    <div class="ach-list" id="ach-list"></div>
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== SETTINGS ================================ -->
+<section id="screen-settings" class="screen screen--modal">
+  <div class="panel">
+    <h2 class="panel-title">Settings</h2>
+
+    <label class="field">
+      <span class="field-label">Brightness <i class="field-val" id="val-exposure">100%</i></span>
+      <input type="range" id="set-exposure" min="60" max="140" step="2" value="100" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Bloom <i class="field-val" id="val-bloom">100%</i></span>
+      <input type="range" id="set-bloom" min="0" max="200" step="5" value="100" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Volume <i class="field-val" id="val-volume">70%</i></span>
+      <input type="range" id="set-volume" min="0" max="100" step="1" value="70" />
+    </label>
+
+    <label class="field field--row">
+      <span class="field-label">Mute</span>
+      <input type="checkbox" id="set-mute" class="switch" />
+    </label>
+
+    <label class="field field--row">
+      <span class="field-label">Ghost racers</span>
+      <input type="checkbox" id="set-ghosts" class="switch" />
+    </label>
+
+    <h3 class="settings-group">Accessibility</h3>
+
+    <label class="field">
+      <span class="field-label">Screen flashes <i class="field-val" id="val-flash">100%</i></span>
+      <input type="range" id="set-flash" min="0" max="100" step="10" value="100" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Camera shake <i class="field-val" id="val-shake">100%</i></span>
+      <input type="range" id="set-shake" min="0" max="100" step="10" value="100" />
+    </label>
+
+    <label class="field field--row">
+      <span class="field-label">Larger text</span>
+      <input type="checkbox" id="set-large-text" class="switch" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Quality</span>
+      <div class="seg" id="set-quality" role="radiogroup" aria-label="Quality">
+        <button class="seg-btn" data-q="low">Low</button>
+        <button class="seg-btn" data-q="medium">Medium</button>
+        <button class="seg-btn" data-q="high">High</button>
+        <button class="seg-btn" data-q="auto">Auto</button>
+      </div>
+    </label>
+
+    <p class="muted small" id="quality-note">Auto steps quality down if the framerate dips.</p>
+
+    <!-- Always reachable, not only after a crash: most "something is wrong"
+         moments — a blank hub, a dead button, a visual glitch — never throw. -->
+    <div class="btn-row">
+      <button class="gel gel--sm" data-action="report-issue">Report an issue</button>
+    </div>
+    <p class="muted small">
+      Opens a copyable report describing this build, your browser and what the
+      game was doing. No personal data.
+    </p>
+
+    <div class="btn-row">
+      <button class="gel gel--primary" data-action="close-modal">Back</button>
+      <button class="gel gel--danger gel--sm" data-action="reset-progress" id="btn-reset">Reset progress</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== PHOTO MODE =============================== -->
+<div id="photo-bar" class="photo-bar" hidden>
+  <div class="photo-controls">
+    <label class="photo-field">
+      <span>Orbit <i id="val-orbit">0°</i></span>
+      <input type="range" id="photo-orbit" min="-180" max="180" step="1" value="0" />
+    </label>
+    <label class="photo-field">
+      <span>Height <i id="val-height">0</i></span>
+      <input type="range" id="photo-height" min="-14" max="20" step="0.5" value="4" />
+    </label>
+    <label class="photo-field">
+      <span>Zoom <i id="val-zoom">14</i></span>
+      <input type="range" id="photo-zoom" min="4" max="46" step="0.5" value="14" />
+    </label>
+    <label class="photo-field">
+      <span>Light <i id="val-photo-exp">100%</i></span>
+      <input type="range" id="photo-exposure" min="50" max="170" step="2" value="100" />
+    </label>
+  </div>
+  <div class="btn-row">
+    <button class="gel gel--primary gel--sm" data-action="photo-save">Save PNG</button>
+    <button class="gel gel--sm" data-action="photo-exit">Done</button>
+  </div>
+</div>
+
+<!-- ============================ DIAGNOSTICS ================================
+     Shown automatically on any uncaught error the game is responsible for,
+     and on demand from Settings. Deliberately plain: it has to render even
+     when the 3D scene is dead. -->
+
+<!-- The quiet channel. Never steals focus; says one short true thing and
+     opens the full report if the player wants it. -->
+<button type="button" id="diag-badge" class="diag-badge" data-diag="open" hidden></button>
+
+<section id="screen-diag" class="screen screen--modal">
+  <div class="panel panel--wide">
+    <h2 class="panel-title" id="diag-title">Something went wrong</h2>
+    <p class="muted small" id="diag-lead"></p>
+    <pre class="diag-report" id="diag-report" tabindex="0"></pre>
+    <div class="btn-row">
+      <button class="gel gel--primary" data-diag="copy">Copy diagnostic report</button>
+      <button class="gel gel--sm" data-diag="reload">Reload</button>
+      <button class="gel gel--sm" data-diag="close">Close</button>
+    </div>
+    <p class="muted small" id="diag-copied"></p>
+  </div>
+</section>
+
+<script type="importmap">{"imports":{"three":"./vendor/three/build/three.module.js","three/addons/":"./vendor/three/examples/jsm/"}}</script>
+<script defer src="game.bundle.js"></script>
+<script>
+setTimeout(function () {
+  if (!window.__AERODRIFT_BOOTED) {
+    document.getElementById('boot-note').textContent = 'Still loading? Try reloading, or open this game in Chrome, Edge, Firefox or Safari with WebGL2 enabled.';
+  }
+}, 15000);
+document.querySelector('[data-action="reload"]')?.addEventListener('click', () => location.reload());
+</script>
+<nav id="showcase-controls" aria-label="Showcase controls">
+  <a href="../index.html#play" target="_top">← Project</a>
+  <button id="showcase-help" type="button">Controls</button>
+  <button id="showcase-finish" type="button" hidden>Finish flight</button>
+  <button id="showcase-fullscreen" type="button">Full screen</button>
+</nav>
+<div id="showcase-hint" role="status" hidden>Move mouse / WASD · Hold Space to boost · Esc to pause</div>
+</body></html>
